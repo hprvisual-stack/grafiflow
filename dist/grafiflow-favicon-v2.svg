@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="grafiflow" x1="10" y1="8" x2="55" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0799ed"/>
+      <stop offset="1" stop-color="#22c99b"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#fff"/>
+  <circle cx="21" cy="32" r="12" fill="#dce8f4" stroke="#0799ed" stroke-width="4"/>
+  <circle cx="21" cy="32" r="5" fill="#172b45"/>
+  <path d="M28 21h24v7H34v7h15v7H34v9h-7z" fill="url(#grafiflow)"/>
+</svg>

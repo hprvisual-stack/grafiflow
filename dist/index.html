@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#072d54" />
+    <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261003-grafiflow-cloud-sync-v1" />
+    <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
+    <link rel="stylesheet" href="./styles.css?v=20261003-grafiflow-cloud-sync-v1" />
+    <title>GrafiFlow — orçamento gráfico</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegação principal">
+        <div class="brand">
+          <img class="brand-logo-full" src="./grafiflow-logo.jpg" alt="GrafiFlow" />
+          <img class="brand-logo" src="./grafiflow-icon-192-v3.png" alt="GrafiFlow" />
+          <div>
+            <div class="brand-name">GrafiFlow</div>
+            <div class="brand-caption">orçamento gráfico</div>
+          </div>
+        </div>
+
+        <nav class="main-nav">
+          <button class="nav-item active" data-view="calculator-view" type="button">
+            <span class="nav-icon">⌗</span><span>Calculadora</span>
+          </button>
+          <button class="nav-item" data-view="quotes-view" type="button">
+            <span class="nav-icon">▤</span><span>Orçamentos</span>
+          </button>
+          <button class="nav-item" data-view="materials-view" type="button">
+            <span class="nav-icon">◈</span><span>Materiais</span>
+          </button>
+          <button class="nav-item" data-view="help-view" type="button">
+            <span class="nav-icon">?</span><span>Como usar</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="offline-note">
+            <span class="status-dot" id="sidebar-status-dot"></span>
+            <span id="sidebar-status-text">Modo local ativo</span>
+          </div>
+          <button class="subtle-button" id="backup-button" type="button">⇩ Exportar backup</button>
+          <label class="subtle-button file-button" for="restore-input">⇧ Importar backup</label>
+          <input id="restore-input" type="file" accept="application/json,.json" hidden />
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="mobile-brand">
+            <img class="brand-logo" src="./grafiflow-icon-192-v3.png" alt="GrafiFlow" />
+            <span>GrafiFlow</span>
+          </div>
+          <div class="page-heading">
+            <span class="eyebrow" id="page-eyebrow">OFICINA / PRODUÇÃO</span>
+            <h1 id="page-title">Calculadora</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="secondary-button account-button" id="account-button" type="button">Entrar e sincronizar</button>
+            <div class="connection-badge" id="connection-badge"><span class="status-dot"></span><span>Offline</span></div>
+            <button class="secondary-button install-button" id="install-button" type="button" hidden>Instalar aplicativo</button>
+            <button class="secondary-button" id="new-quote-button" type="button">+ Novo cálculo</button>
+            <button class="secondary-button clear-quote-button" id="clear-quote-button" type="button">Limpar orçamento</button>
+            <button class="secondary-button" id="print-button" type="button">PDF para cliente</button>
+            <button class="primary-button" id="save-quote-button" type="button">Salvar orçamento</button>
+          </div>
+        </header>
+
+        <div class="content-wrap">
+          <section class="view active" id="calculator-view" aria-labelledby="calculator-heading">
+            <div class="workspace-intro">
+              <div>
+                <p class="section-kicker">APROVEITAMENTO RETANGULAR</p>
+                <h2 id="calculator-heading">Monte o orçamento e veja o encaixe</h2>
+                <p class="muted-copy">Informe a bobina ou as dimensões da chapa e as peças. O GrafiFlow procura o melhor encaixe.</p>
+              </div>
+              <div class="quote-name-wrap">
+                <label for="quote-name">Nome do orçamento</label>
+                <input id="quote-name" type="text" placeholder="Ex.: Fachada Loja Central" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="dashboard-grid">
+              <div class="primary-column">
+                <section class="panel" aria-labelledby="material-panel-heading">
+                  <div class="panel-heading material-panel-heading">
+                    <div>
+                      <span class="section-kicker">01 / MATERIAL</span>
+                      <h3 id="material-panel-heading">Materiais usados neste cálculo</h3>
+                    </div>
+                    <div class="material-panel-actions"><button class="secondary-button small-button" id="open-material-picker" type="button">Puxar produto do catálogo</button><button class="text-button" id="add-material-button" type="button">+ Novo material</button></div>
+                  </div>
+                  <div id="material-editor-list" class="material-editor-list"></div>
+                </section>
+
+                <section class="panel" aria-labelledby="pieces-panel-heading">
+                  <div class="panel-heading">
+                    <div>
+                      <span class="section-kicker">02 / PEÇAS</span>
+                      <h3 id="pieces-panel-heading">O que precisa ser produzido?</h3>
+                    </div>
+                    <button class="text-button" id="add-piece-button" type="button">+ Adicionar peça</button>
+                  </div>
+                  <div class="pieces-table-head" aria-hidden="true">
+                    <span>Descrição</span><span>Material</span><span>Largura</span><span>Altura</span><span>Qtd.</span><span></span>
+                  </div>
+                  <div id="pieces-list" class="pieces-list"></div>
+                  <div id="pieces-empty" class="empty-inline" hidden>Nenhuma peça adicionada. Comece informando a primeira peça.</div>
+                </section>
+
+                <section class="panel compact-panel" aria-labelledby="production-panel-heading">
+                  <div class="panel-heading">
+                    <div>
+                      <span class="section-kicker">03 / REGRAS DE CORTE</span>
+                      <h3 id="production-panel-heading">Margens e aproveitamento</h3>
+                    </div>
+                    <span class="info-badge">Peças retangulares</span>
+                  </div>
+                  <div class="rules-grid">
+                    <label class="field"><span>Sangria por lado <small>(mm)</small></span><input id="global-bleed" type="number" min="0" step="0.1" value="0" /></label>
+                    <label class="field"><span>Espaço entre peças <small>(mm)</small></span><input id="global-gap" type="number" min="0" step="0.1" value="2" /></label>
+                    <label class="field field-toggle"><span>Priorizar menor desperdício</span><button id="optimize-button" class="toggle-switch on" type="button" role="switch" aria-checked="true"><span></span></button></label>
+                  </div>
+                </section>
+
+                <section class="panel" aria-labelledby="installation-heading">
+                  <div class="panel-heading">
+                    <div>
+                      <span class="section-kicker">04 / INSTALAÇÃO</span>
+                      <h3 id="installation-heading">Inclua mão de obra e insumos</h3>
+                    </div>
+                    <button class="collapse-button" id="toggle-installation" type="button" aria-expanded="true">Recolher</button>
+                  </div>
+                  <div id="installation-content">
+                    <div class="form-grid three-columns">
+                      <label class="field"><span>Tipo de serviço</span><select id="installation-type"><option value="lona">Instalação de lona</option><option value="adesivo">Instalação de adesivo</option><option value="outro">Outro serviço</option></select></label>
+                      <label class="field"><span>Cobrança por</span><select id="installation-basis"><option value="m2">m²</option><option value="linear">metro linear</option><option value="fixed">valor fixo</option></select></label>
+                      <label class="field"><span>Quantidade</span><input id="installation-quantity" type="number" min="0" step="0.01" value="0" /></label>
+                      <label class="field"><span>Valor da mão de obra <small>(R$)</small></span><input id="installation-unit-price" type="number" min="0" step="0.01" value="0" /></label>
+                      <label class="field"><span>Deslocamento <small>(R$)</small></span><input id="installation-travel" type="number" min="0" step="0.01" value="0" /></label>
+                      <label class="field field-toggle"><span>Usar medida calculada</span><button id="auto-installation-button" class="toggle-switch on" type="button" role="switch" aria-checked="true"><span></span></button></label>
+                    </div>
+                    <div class="supplies-heading"><span>Insumos adicionais</span><button class="text-button" id="add-supply-button" type="button">+ Adicionar insumo</button></div>
+                    <div id="supplies-list" class="supplies-list"></div>
+                  </div>
+                </section>
+
+                <section class="panel" aria-labelledby="profit-heading">
+                  <div class="panel-heading">
+                    <div>
+                      <span class="section-kicker">05 / VENDA</span>
+                      <h3 id="profit-heading">Confira a lucratividade</h3>
+                    </div>
+                    <span class="info-badge accent-badge">Resultado em tempo real</span>
+                  </div>
+                  <div class="form-grid three-columns">
+                    <label class="field"><span>Preço de venda <small>(R$)</small></span><input id="sale-price" type="number" min="0" step="0.01" value="0" /></label>
+                    <label class="field"><span>Outros custos <small>(R$)</small></span><input id="other-costs" type="number" min="0" step="0.01" value="0" /></label>
+                    <label class="field"><span>Margem desejada <small>(%)</small></span><input id="target-margin" type="number" min="0" max="99.9" step="1" value="35" /></label>
+                  </div>
+                  <div id="profit-summary" class="profit-summary"></div>
+                </section>
+              </div>
+
+              <aside class="results-column" aria-label="Resultados do cálculo">
+                <section class="result-hero panel">
+                  <div class="result-hero-top"><span class="section-kicker">RESULTADO DO ENCAIXE</span><span id="result-state" class="result-state">Aguardando peças</span></div>
+                  <div class="length-result"><span id="total-length" class="big-number">0,00</span><span class="big-unit">m<br /><small>lineares</small></span></div>
+                  <div class="result-caption">Comprimento necessário de bobina</div>
+                  <div class="metrics-grid" id="metrics-grid"></div>
+                </section>
+
+                <section class="panel layout-panel">
+                  <div class="panel-heading layout-heading"><div><span class="section-kicker">MAPA DE CORTE</span><h3>Visualização do aproveitamento</h3></div><button id="zoom-layout-button" class="icon-button" type="button" title="Ampliar desenho">↗</button></div>
+                  <div id="layout-canvas" class="layout-canvas"><div class="canvas-placeholder">Adicione peças para visualizar o encaixe.</div></div>
+                  <div id="layout-legend" class="layout-legend"></div>
+                </section>
+
+                <section class="panel cost-panel">
+                  <div class="panel-heading"><div><span class="section-kicker">CUSTO DIRETO</span><h3>Composição do orçamento</h3></div></div>
+                  <div id="cost-breakdown" class="cost-breakdown"></div>
+                </section>
+
+                <section class="online-card panel">
+                  <div class="online-card-icon">⌁</div>
+                  <div><span class="section-kicker">PRÓXIMA ETAPA</span><h3>Comprar materiais perto de você</h3><p>Na versão online, o GrafiFlow poderá pesquisar fornecedores e comparar preços quando houver conexão.</p><button class="secondary-button small-button" id="find-stores-button" type="button">Buscar no mapa</button></div>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view" id="quotes-view" aria-labelledby="quotes-heading">
+            <div class="view-header"><div><p class="section-kicker">HISTÓRICO LOCAL</p><h2 id="quotes-heading">Orçamentos salvos</h2><p class="muted-copy">Seus dados ficam neste dispositivo. Use o backup para transferir entre aparelhos.</p></div><button class="primary-button" id="quotes-new-button" type="button">+ Novo orçamento</button></div>
+            <div id="quotes-list" class="quotes-list"></div>
+          </section>
+
+          <section class="view" id="materials-view" aria-labelledby="materials-heading">
+            <div class="view-header"><div><p class="section-kicker">CATÁLOGO LOCAL</p><h2 id="materials-heading">Materiais e mídias</h2><p class="muted-copy">Cadastre bobinas e chapas para reutilizar dimensões e preços nos cálculos.</p></div><button class="primary-button" id="materials-new-button" type="button">+ Novo material</button></div>
+            <div class="materials-layout"><section class="panel" id="saved-material-form-panel"><div class="panel-heading"><div><span class="section-kicker">CADASTRO</span><h3 id="saved-material-form-title">Novo material</h3></div></div><form id="saved-material-form" class="form-grid two-columns"><input id="saved-material-id" type="hidden" /><label class="field full-width"><span>Descrição</span><input id="saved-material-name" required type="text" placeholder="Ex.: Lona 440 g" /></label><label class="field full-width"><span>Fornecedor <small>(opcional)</small></span><input id="saved-material-supplier" type="text" placeholder="Ex.: Serilon, Alltak ou fornecedor local" /></label><label class="field full-width"><span>Modo de cálculo</span><select id="saved-material-calculation-mode"><option value="roll">Bobina — aproveitamento por metro linear</option><option value="sheet">Chapa — aproveitamento por chapa ou m²</option><option value="area">Impressão terceirizada — cobrança por m²</option></select></label><label class="field"><span><span id="saved-material-width-label">Largura da bobina</span> <small>(cm)</small></span><input id="saved-material-width" required type="number" min="1" step="0.1" placeholder="320" /></label><label class="field" id="saved-material-height-field" hidden><span>Altura da chapa <small>(cm)</small></span><input id="saved-material-height" type="number" min="1" step="0.1" placeholder="244" disabled /></label><label class="field"><span id="saved-material-price-label">Preço base (R$/metro linear)</span><input id="saved-material-price" required type="number" min="0" step="0.01" placeholder="0,00" /></label><label class="field"><span>Cobrança</span><select id="saved-material-basis"><option value="linear">por metro linear</option><option value="m2">por m²</option><option value="sheet" disabled>por chapa</option></select></label><label class="field"><span>Espaço entre peças <small>(mm)</small></span><input id="saved-material-gap" type="number" min="0" step="0.1" value="2" /></label><label class="field full-width"><span><input id="saved-material-rotate" type="checkbox" checked /> Permitir giro automático das peças</span></label><div class="volume-pricing-box full-width"><div class="volume-pricing-heading"><div><span class="section-kicker">PREÇO POR VOLUME</span><strong>Redução conforme a quantidade</strong><p>Cadastre faixas para reduzir o valor unitário de impressões maiores.</p></div><button class="secondary-button small-button" id="add-saved-material-tier" data-action="add-saved-material-tier" type="button">+ Faixa</button></div><div id="saved-material-volume-tiers" class="volume-pricing-list"></div><p class="material-note volume-pricing-note">A maior faixa alcançada será aplicada ao total calculado do material. Deixe vazio se não houver condição por volume.</p></div><div class="form-actions full-width"><button class="secondary-button" id="cancel-saved-material" type="button">Limpar</button><button class="primary-button" type="submit">Salvar material</button></div></form></section><section class="panel"><div class="panel-heading"><div><span class="section-kicker">SALVOS NESTE DISPOSITIVO</span><h3>Seus materiais</h3></div></div><div id="saved-materials-list" class="saved-materials-list"></div></section></div>
+          </section>
+
+          <section class="view" id="help-view" aria-labelledby="help-heading">
+            <div class="view-header"><div><p class="section-kicker">GUIA RÁPIDO</p><h2 id="help-heading">Como usar o GrafiFlow</h2><p class="muted-copy">Uma sequência curta para sair da medida e chegar ao preço de venda.</p></div></div>
+            <div class="help-grid"><article class="help-card"><span class="help-number">01</span><h3>Escolha o material</h3><p>Cadastre uma vez no catálogo e, no orçamento, clique em “Puxar produto do catálogo” para substituir o material principal. Use “+ Novo material” para adicionar outra mídia. Largura, preço, cobrança e condições por volume são preenchidos automaticamente.</p></article><article class="help-card"><span class="help-number">02</span><h3>Adicione as peças</h3><p>Digite largura, altura e quantidade. O sistema poderá girar cada retângulo para procurar um encaixe melhor.</p></article><article class="help-card"><span class="help-number">03</span><h3>Leia o mapa de corte</h3><p>O desenho mostra o encaixe nas bobinas ou em cada chapa. Quando houver laminação, o sistema recalcula o aproveitamento com as dimensões próprias do material escolhido.</p></article><article class="help-card"><span class="help-number">04</span><h3>Complete o orçamento</h3><p>Adicione instalação, insumos, preço de venda e margem. Depois salve ou imprima em PDF.</p></article></div>
+            <section class="panel install-guide-panel"><span class="section-kicker">VERSÃO INSTALÁVEL</span><h3>Use o GrafiFlow como aplicativo</h3><p class="muted-copy">No Android e no Windows, instale o GrafiFlow pelo navegador para abrir em uma janela própria e continuar usando seus dados mesmo sem internet.</p><div class="install-guide-grid"><div><strong>Android</strong><span>Use o botão “Instalar aplicativo” ou o menu do navegador → “Adicionar à tela inicial”.</span></div><div><strong>Windows</strong><span>No Chrome ou Edge, use o botão de instalação na barra de endereço ou o botão “Instalar aplicativo”.</span></div></div><p class="material-note">Se o app antigo ainda aparecer como Nesto, exporte um backup, remova essa instalação e instale o GrafiFlow novamente pelo navegador.</p><button class="secondary-button" id="help-install-button" type="button" hidden>Instalar aplicativo</button></section>
+            <section class="panel formula-panel"><span class="section-kicker">FÓRMULAS USADAS</span><div class="formula-row"><span>Área comprada</span><strong>bobina: largura × comprimento; chapa: largura × altura × quantidade</strong></div><div class="formula-row"><span>Desperdício</span><strong>área comprada − área das peças</strong></div><div class="formula-row"><span>Lucro</span><strong>preço de venda − custo total</strong></div><div class="formula-row"><span>Preço com margem</span><strong>custo total ÷ (1 − margem desejada)</strong></div></section>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="modal-backdrop account-modal" id="account-modal" hidden>
+      <div class="modal-card account-modal-card" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+        <div class="modal-heading">
+          <div><span class="section-kicker">CONTA GRAFIFLOW</span><h2 id="account-modal-title">Entrar e sincronizar</h2><p id="account-modal-status" class="muted-copy">Seus dados continuam salvos neste dispositivo.</p></div>
+          <button class="icon-button" id="close-account-modal" type="button" aria-label="Fechar">×</button>
+        </div>
+        <form id="account-auth-form" class="account-auth-form">
+          <label class="field" id="auth-name-field" hidden><span>Seu nome</span><input id="auth-full-name" type="text" autocomplete="name" placeholder="Nome profissional" /></label>
+          <label class="field" id="auth-workspace-field" hidden><span>Nome da empresa ou espaço</span><input id="auth-workspace-name" type="text" autocomplete="organization" placeholder="Ex.: Minha gráfica" /></label>
+          <label class="field"><span>E-mail</span><input id="auth-email" type="email" autocomplete="username" required placeholder="voce@empresa.com" /></label>
+          <label class="field"><span>Senha</span><input id="auth-password" type="password" autocomplete="current-password" required minlength="1" placeholder="Sua senha" /></label>
+          <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar</button>
+        </form>
+        <div class="account-modal-actions">
+          <button class="text-button" id="auth-mode-toggle" type="button">Criar conta</button>
+          <button class="secondary-button" id="auth-sync-now" type="button" hidden>Sincronizar agora</button>
+          <button class="secondary-button" id="auth-signout" type="button" hidden>Sair da conta</button>
+          <button class="secondary-button" id="cancel-account-modal" type="button">Fechar</button>
+        </div>
+        <p class="account-offline-note">O GrafiFlow funciona offline. A sincronização acontece quando houver internet; seus dados locais e o backup continuam disponíveis.</p>
+      </div>
+    </div>
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <div class="modal-backdrop" id="material-picker-modal" hidden><div class="modal-card material-picker-modal-card" role="dialog" aria-modal="true" aria-labelledby="material-picker-title"><div class="modal-heading"><div><span class="section-kicker">CATÁLOGO LOCAL</span><h2 id="material-picker-title">Puxar produto do catálogo</h2><p class="muted-copy">O material escolhido substituirá o material principal. Para incluir outra mídia, use “+ Novo material”.</p></div><button class="icon-button" id="close-material-picker" type="button" aria-label="Fechar">×</button></div><div id="material-picker-list" class="material-picker-list"></div></div></div>
+    <div class="modal-backdrop" id="layout-modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="layout-modal-title"><div class="modal-heading"><div><span class="section-kicker">VISUALIZAÇÃO AMPLIADA</span><h2 id="layout-modal-title">Mapa de corte</h2></div><button class="icon-button" id="close-layout-modal" type="button" aria-label="Fechar">×</button></div><div id="modal-layout-canvas" class="modal-layout-canvas"></div></div></div>
+    <div class="modal-backdrop client-quote-modal" id="client-quote-modal" hidden>
+      <div class="modal-card client-quote-modal-card" role="dialog" aria-modal="true" aria-labelledby="client-quote-modal-title">
+        <div class="modal-heading client-quote-modal-heading">
+          <div><span class="section-kicker">DOCUMENTO EXTERNO</span><h2 id="client-quote-modal-title">Orçamento para o cliente</h2><p class="muted-copy">Revise os dados e depois salve a versão limpa em PDF.</p></div>
+          <button class="icon-button" id="close-client-quote-modal" type="button" aria-label="Fechar">×</button>
+        </div>
+        <div class="client-quote-workspace">
+          <section class="client-quote-editor" aria-label="Dados do orçamento para o cliente">
+            <div class="client-form-section"><span class="section-kicker">IDENTIFICAÇÃO</span><h3>Quem está enviando?</h3><div class="form-grid two-columns client-form-grid"><label class="field full-width"><span>Nome da empresa ou profissional</span><input data-client-field="businessName" id="client-business-name" type="text" placeholder="Ex.: Helder Comunicação Visual" /></label><label class="field"><span>Telefone / WhatsApp</span><input data-client-field="businessPhone" id="client-business-phone" type="text" placeholder="(00) 00000-0000" /></label><label class="field"><span>E-mail</span><input data-client-field="businessEmail" id="client-business-email" type="email" placeholder="contato@empresa.com" /></label></div></div>
+            <div class="client-form-section"><span class="section-kicker">CLIENTE</span><h3>Para quem é o orçamento?</h3><div class="form-grid two-columns client-form-grid"><label class="field full-width"><span>Nome do cliente</span><input data-client-field="clientName" id="client-name" type="text" placeholder="Nome ou empresa do cliente" /></label><label class="field full-width"><span>Telefone / WhatsApp do cliente</span><input data-client-field="clientContact" id="client-contact" type="text" placeholder="Opcional" /></label></div></div>
+            <div class="client-form-section"><span class="section-kicker">CONDIÇÕES</span><h3>Combine os detalhes</h3><div class="form-grid two-columns client-form-grid"><label class="field"><span>Validade do orçamento</span><input data-client-field="validity" id="client-validity" type="text" placeholder="Ex.: 7 dias" /></label><label class="field"><span>Prazo de produção/instalação</span><input data-client-field="deadline" id="client-deadline" type="text" placeholder="Ex.: até 5 dias úteis" /></label><label class="field full-width"><span>Forma de pagamento</span><input data-client-field="paymentTerms" id="client-payment-terms" type="text" placeholder="Ex.: 50% de entrada e saldo na entrega" /></label><label class="field full-width"><span>Observações</span><textarea data-client-field="notes" id="client-notes" rows="3" placeholder="Informações importantes para o cliente"></textarea></label></div></div>
+          </section>
+          <section class="client-quote-preview-wrap" aria-label="Prévia do documento"><div id="client-quote-preview" class="client-quote-preview"></div></section>
+        </div>
+        <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
+      </div>
+    </div>
+    <script src="./config.js?v=20261003-grafiflow-cloud-sync-v1"></script>
+    <script type="module" src="./app.js?v=20261003-grafiflow-cloud-sync-v1"></script>
+  </body>
+</html>
