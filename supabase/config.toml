@@ -1,0 +1,6 @@
+# Supabase project configuration for GrafiFlow.
+project_id = "grafiflow"
+
+# Bind the production deployment workflow to the new Supabase project.
+[remotes.prod]
+project_id = "ytlcxazmktomawdpssgl"
