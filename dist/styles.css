@@ -28,6 +28,14 @@ body { margin: 0; min-width: 320px; background: var(--paper); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(10, 151, 224, 0.38); outline-offset: 2px; }
+.app-shell[hidden], #auth-bootstrap-screen[hidden] { display: none !important; }
+.auth-bootstrap { position: fixed; inset: 0; z-index: 60; display: grid; align-content: center; justify-items: center; gap: 18px; padding: 24px; color: var(--ink); background: #fff; }
+.auth-bootstrap-brand { display: flex; align-items: center; gap: 10px; font-size: 1.32rem; font-weight: 850; letter-spacing: -0.05em; }
+.auth-bootstrap-brand img { width: 42px; height: 42px; border-radius: 11px; }
+.auth-bootstrap p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.auth-loader { width: 26px; height: 26px; border: 3px solid #dbeaf2; border-top-color: var(--accent); border-radius: 50%; animation: auth-spin 800ms linear infinite; }
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .auth-loader { animation-duration: 2.4s; } }
 
 .app-shell { min-height: 100vh; display: flex; }
 .sidebar { width: 246px; flex: 0 0 246px; background: var(--ink); color: #fff; padding: 26px 17px 19px; display: flex; flex-direction: column; }
@@ -434,6 +442,67 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .account-close-actions { justify-content: flex-end; }
 #auth-login-view[hidden], #recovery-request-form[hidden], #password-recovery-form[hidden], #account-settings-view[hidden] { display: none !important; }
 .account-offline-note { margin: 20px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.74rem; line-height: 1.5; }
+.account-access-layout { width: min(650px, 100%); max-height: 92vh; overflow: auto; background: var(--paper); }
+.auth-brand-panel { display: none; }
+.auth-form-region { min-width: 0; }
+.auth-mobile-brand { display: none; }
+.auth-sync-note { display: flex; align-items: center; gap: 11px; margin: 30px 0 0; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.78rem; line-height: 1.45; }
+.auth-sync-note svg { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: var(--accent-deep); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.auth-input-wrap { position: relative; display: flex; align-items: center; }
+.auth-input-wrap > svg { position: absolute; left: 15px; width: 20px; height: 20px; fill: none; stroke: #6d8396; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.auth-input-wrap > input { width: 100%; min-height: 56px; padding-left: 48px; border-radius: 11px; background: #fbfdff; }
+.auth-gate-active { min-height: 100%; overflow: hidden; background: #fff; }
+.auth-gate-active #account-modal:not([hidden]) { position: fixed; inset: 0; z-index: 50; display: block; overflow: hidden; padding: 0; background: #fff; }
+.auth-gate-active .account-access-layout { display: grid; grid-template-columns: minmax(340px, 0.88fr) minmax(480px, 1.12fr); width: min(1560px, 100%); min-width: 0; max-width: 100%; max-height: 100dvh; min-height: 100dvh; margin: auto; overflow: hidden; background: #fff; }
+.auth-gate-active .auth-brand-panel { position: relative; isolation: isolate; display: flex; min-width: 0; flex-direction: column; justify-content: space-between; overflow: hidden; padding: clamp(34px, 5.2vw, 82px); color: #fff; background: linear-gradient(145deg, #06284b 0%, #073661 55%, #084575 100%); }
+.auth-gate-active .auth-brand-panel::before { position: absolute; z-index: -1; inset: 0; background-image: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px); background-size: 38px 38px; content: ""; mask-image: linear-gradient(to bottom, #000 0%, transparent 82%); }
+.auth-gate-active .auth-brand-panel::after { position: absolute; z-index: -1; right: -20%; bottom: -25%; width: 80%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, rgba(10, 151, 224, 0.28), transparent 70%); content: ""; }
+.auth-brand-logo { position: relative; z-index: 2; display: block; width: min(190px, 56%); height: auto; border-radius: 13px; object-fit: contain; box-shadow: 0 14px 35px rgba(1, 22, 43, 0.16); }
+.auth-brand-copy { position: relative; z-index: 2; margin-block: auto; padding-block: clamp(42px, 9vh, 104px); }
+.auth-brand-copy h1 { max-width: 12ch; margin: 0; color: #fff; font-size: clamp(2.15rem, 3.6vw, 3.5rem); font-weight: 800; line-height: 1.07; letter-spacing: -0.065em; }
+.auth-brand-copy p { max-width: 34ch; margin: 20px 0 0; color: #bad4e5; font-size: clamp(0.98rem, 1.35vw, 1.12rem); line-height: 1.6; }
+.auth-print-visual { position: absolute; z-index: 1; right: -9%; bottom: 10%; display: block; width: min(110%, 830px); height: auto; opacity: 0.96; pointer-events: none; }
+.auth-brand-footer { position: relative; z-index: 2; margin: 0; color: rgba(224, 241, 250, 0.66); font-size: 0.77rem; letter-spacing: 0.02em; }
+.auth-gate-active .auth-form-region { display: grid; min-height: 100dvh; min-width: 0; place-items: center; overflow-y: auto; padding: clamp(34px, 6.5vw, 104px); background: radial-gradient(circle at 96% 5%, rgba(10, 151, 224, 0.06), transparent 28%), #fff; }
+.auth-gate-active .account-modal-card { width: min(470px, 100%); max-height: none; overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.auth-gate-active .modal-heading { margin-bottom: 26px; }
+.auth-gate-active .modal-heading h2 { margin: 0; color: var(--ink); font-size: clamp(2rem, 3vw, 2.7rem); font-weight: 800; line-height: 1.08; letter-spacing: -0.06em; }
+.auth-gate-active #account-modal-status { min-height: 1.5em; margin: 11px 0 0; color: var(--muted); font-size: 0.98rem; line-height: 1.5; }
+.auth-gate-active .account-auth-form { gap: 18px; margin-top: 0; }
+.auth-gate-active #auth-login-view .account-auth-form { margin-top: 0; }
+.auth-gate-active .account-auth-form .field > span:first-child { color: #14395a; font-size: 0.83rem; font-weight: 750; }
+.auth-gate-active .account-auth-form .field input { min-height: 54px; border: 1px solid #cfdeea; border-radius: 11px; background: #fbfdff; color: var(--ink); font-size: 1rem; }
+.auth-gate-active .auth-input-wrap > input { padding-left: 48px; }
+.auth-gate-active .account-auth-form input::placeholder { color: #8ca0b2; }
+.auth-gate-active .account-submit { min-height: 58px; margin-top: 6px; border-radius: 11px; color: #fff; background: linear-gradient(110deg, #078be0 0%, #0a97e0 60%, #19a9d0 100%); box-shadow: 0 12px 28px rgba(10, 151, 224, 0.2); font-size: 0.95rem; font-weight: 800; }
+.auth-gate-active .account-submit:hover:not(:disabled) { filter: brightness(1.04); box-shadow: 0 15px 34px rgba(10, 151, 224, 0.25); }
+.auth-gate-active .account-modal-actions { gap: 14px; margin-top: 22px; }
+.auth-gate-active .account-modal-actions .text-button { padding: 5px 0; color: var(--accent-deep); font-size: 0.86rem; font-weight: 700; }
+.auth-gate-active .account-modal-actions .text-button:hover { color: #034b7d; text-decoration: underline; }
+.auth-gate-active #auth-mode-toggle { margin-left: auto; }
+.auth-gate-active .auth-sync-note { margin-top: 30px; padding-top: 21px; font-size: 0.79rem; }
+.auth-gate-active #close-account-modal, .auth-gate-active .account-close-actions, .auth-gate-active .account-offline-note { display: none !important; }
+.auth-gate-active .account-settings-view:not([hidden]) { display: none !important; }
+
+@media (max-width: 820px) {
+  .auth-gate-active #account-modal:not([hidden]) { display: block; overflow-y: auto; background: #fff; }
+  .auth-gate-active .account-access-layout { display: block; width: 100%; max-height: none; min-height: 100dvh; overflow: visible; }
+  .auth-gate-active .auth-brand-panel { display: none; }
+  .auth-gate-active .auth-form-region { display: flex; min-height: 100dvh; flex-direction: column; justify-content: center; align-items: stretch; padding: max(28px, env(safe-area-inset-top)) 24px max(28px, env(safe-area-inset-bottom)); }
+  .auth-gate-active .auth-mobile-brand { display: flex; width: min(470px, 100%); align-items: center; gap: 12px; margin: 0 auto clamp(34px, 7vh, 64px); color: var(--ink); font-size: 1.58rem; font-weight: 850; letter-spacing: -0.055em; }
+  .auth-gate-active .auth-mobile-brand img { width: 49px; height: 49px; border-radius: 12px; }
+  .auth-gate-active .account-modal-card { width: min(470px, 100%); margin: 0 auto; }
+  .auth-gate-active .modal-heading { margin-bottom: 22px; }
+  .auth-gate-active .modal-heading h2 { font-size: clamp(1.8rem, 7vw, 2.35rem); }
+  .auth-gate-active .auth-sync-note { margin-top: 26px; }
+}
+
+@media (max-width: 420px) {
+  .auth-gate-active .auth-form-region { padding-inline: 20px; }
+  .auth-gate-active .auth-mobile-brand { margin-bottom: 30px; }
+  .auth-gate-active .account-modal-actions { align-items: flex-start; }
+  .auth-gate-active .account-modal-actions .text-button { font-size: 0.8rem; }
+}
 
 @media (max-width: 650px) {
   .primary-column { grid-template-columns: minmax(0, 1fr); }

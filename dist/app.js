@@ -1178,22 +1178,24 @@ async function syncCloudNow() {
 }
 
 async function activateCloudSession(session) {
-  saveCloudSession({ ...session, expires_at: session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600) });
-  const ownerId = cloudSession?.user?.id || '';
+  const nextSession = { ...session, expires_at: session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600) };
+  const ownerId = nextSession.user?.id || '';
   let localOwner = '';
   try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
   if (localOwner && ownerId && localOwner !== ownerId) {
     cloudWorkspaceId = '';
-    updateAccountStatus('Os dados locais deste dispositivo pertencem a outra conta. Exporte um backup antes de trocar de conta.');
-    showToast('Para proteger seus dados, este dispositivo não sincronizou com a conta diferente.', 'error');
-    return;
+    authNotice = 'Os dados locais deste dispositivo pertencem a outra conta. Entre com a conta original para continuar.';
+    updateAccountStatus(authNotice);
+    showToast('Esta conta não corresponde aos dados locais deste dispositivo.', 'error');
+    return false;
   }
+  saveCloudSession(nextSession);
   if (!localOwner && ownerId) {
     try { localStorage.setItem(CLOUD_OWNER_KEY, ownerId); } catch { /* armazenamento local opcional */ }
   }
   if (!navigator.onLine) {
     updateAccountStatus('Conta disponível offline');
-    return;
+    return true;
   }
   try {
     await loadAccountProfile();
@@ -1205,20 +1207,22 @@ async function activateCloudSession(session) {
     updateAccountStatus(error.message || 'Sincronização indisponível');
     showToast(error.message || 'Não foi possível iniciar a sincronização.', 'error');
   }
+  return true;
 }
 
 async function restoreCloudAccount() {
   const saved = readCloudSession();
   if (!saved?.access_token) return;
   cloudWorkspaceId = (() => { try { return localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { return ''; } })();
-  saveCloudSession(saved);
   let localOwner = '';
   try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
   if (localOwner && saved.user?.id && localOwner !== saved.user.id) {
     cloudWorkspaceId = '';
-    updateAccountStatus('Os dados locais deste dispositivo pertencem a outra conta. Exporte um backup antes de trocar de conta.');
+    authNotice = 'Os dados locais deste dispositivo pertencem a outra conta. Entre com a conta original para continuar.';
+    updateAccountStatus(authNotice);
     return;
   }
+  saveCloudSession(saved);
   if (!cloudConfigured() || !navigator.onLine) {
     updateAccountStatus(navigator.onLine ? 'Configure o Supabase para sincronizar' : 'Conta disponível offline');
     return;
@@ -1245,6 +1249,7 @@ function updateAccountStatus(message = '') {
   const status = document.getElementById('account-modal-status');
   const configured = cloudConfigured();
   const signedIn = Boolean(cloudSession?.user?.email || cloudSession?.user?.id);
+  const authGateActive = document.body.classList.contains('auth-gate-active') || document.body.classList.contains('auth-pending');
   const manualSync = document.getElementById('manual-sync-button');
   if (manualSync) manualSync.disabled = !configured || !navigator.onLine || cloudSyncRunning || fullSyncRunning;
   if (button) {
@@ -1254,7 +1259,8 @@ function updateAccountStatus(message = '') {
   if (status) {
     status.textContent = message || authNotice || (signedIn
       ? (cloudSyncRunning ? 'Sincronizando dados…' : !navigator.onLine ? 'Sem internet. Seus dados continuam salvos neste dispositivo.' : cloudWorkspaceName ? `Conectado a ${cloudWorkspaceName}.` : 'Conta conectada; aguardando sincronização.')
-      : configured ? 'Entre ou crie uma conta para manter seus dados sincronizados entre dispositivos.' : 'A conta em nuvem será ativada quando a conexão com o Supabase estiver configurada. O modo offline segue funcionando.');
+      : authGateActive ? (configured ? 'Entre para continuar no seu espaço.' : 'A conexão com a conta não está configurada.')
+        : configured ? 'Entre ou crie uma conta para manter seus dados sincronizados entre dispositivos.' : 'A conta em nuvem será ativada quando a conexão com o Supabase estiver configurada. O modo offline segue funcionando.');
   }
   const signOut = document.getElementById('auth-signout');
   if (signOut) signOut.hidden = !signedIn;
@@ -1294,20 +1300,32 @@ function renderAuthMode() {
   if (password) password.autocomplete = creating ? 'new-password' : 'current-password';
   if (password) password.minLength = creating ? 8 : 1;
   if (password) password.required = authView;
-  if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar';
+  if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar no GrafiFlow';
   if (toggle) toggle.textContent = creating ? 'Já tenho uma conta' : 'Criar conta';
   if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user);
   if (forgot) forgot.hidden = authMode !== 'login' || Boolean(cloudSession?.user);
   if (title) {
     const titles = {
-      login: 'Entrar e sincronizar',
-      signup: 'Criar conta GrafiFlow',
+      login: 'Acesse o GrafiFlow',
+      signup: 'Crie sua conta GrafiFlow',
       'recovery-request': 'Recuperar senha',
       'recovery-complete': 'Definir nova senha',
       account: 'Minha conta',
     };
     title.textContent = titles[authMode] || titles.login;
   }
+}
+
+function setAuthAccessUI(authenticated) {
+  const body = document.body;
+  const appShell = document.querySelector('.app-shell');
+  const accountModal = document.getElementById('account-modal');
+  const bootstrap = document.getElementById('auth-bootstrap-screen');
+  body?.classList.remove('auth-pending');
+  body?.classList.toggle('auth-gate-active', !authenticated);
+  if (bootstrap) bootstrap.hidden = true;
+  if (appShell) appShell.hidden = !authenticated;
+  if (accountModal) accountModal.hidden = authenticated;
 }
 
 function openAccountModal() {
@@ -1347,12 +1365,13 @@ async function submitCloudAuth(event) {
       ? await cloudFetch('/auth/v1/signup', { method: 'POST', token: cloudConfig().key, body })
       : await cloudFetch('/auth/v1/token?grant_type=password', { method: 'POST', token: cloudConfig().key, body });
     if (response?.access_token) {
-      await activateCloudSession({ ...response, user: response.user });
-      if (cloudSession?.access_token) {
-        document.getElementById('account-modal').hidden = true;
-        document.getElementById('account-auth-form')?.reset();
-        authMode = 'account';
-      }
+      const activated = await activateCloudSession({ ...response, user: response.user });
+      if (!activated) return;
+      if (!cloudSession?.access_token || !cloudSession?.user?.id) throw new Error('Não foi possível validar a sessão da conta. Tente entrar novamente.');
+      document.getElementById('account-auth-form')?.reset();
+      authMode = 'account';
+      authNotice = '';
+      setAuthAccessUI(true);
       showToast('Conta GrafiFlow conectada.');
     } else if (creating) {
       authNotice = 'Cadastro criado. Abra o e-mail e use o botão Confirmar cadastro. Depois, entre com sua senha.';
@@ -1410,6 +1429,7 @@ async function submitRecoveredPassword(event) {
     document.getElementById('password-recovery-form')?.reset();
     authMode = 'account';
     authNotice = 'Senha redefinida. Sua nova senha já está ativa.';
+    setAuthAccessUI(true);
     renderAuthMode();
     updateAccountStatus();
     showToast('Senha redefinida com sucesso.');
@@ -1506,7 +1526,7 @@ async function handleAuthCallback() {
     authNotice = errorDescription;
     renderAuthMode();
     updateAccountStatus();
-    document.getElementById('account-modal').hidden = false;
+    setAuthAccessUI(false);
     return true;
   }
   if (!accessToken) return false;
@@ -1526,12 +1546,19 @@ async function handleAuthCallback() {
       authNotice = 'Confirme a nova senha abaixo para concluir a recuperação.';
       renderAuthMode();
       updateAccountStatus();
-      document.getElementById('account-modal').hidden = false;
+      setAuthAccessUI(false);
       return true;
     }
-    await activateCloudSession(session);
-    document.getElementById('account-modal').hidden = true;
+    const activated = await activateCloudSession(session);
+    if (!activated) {
+      authMode = 'login';
+      renderAuthMode();
+      updateAccountStatus();
+      setAuthAccessUI(false);
+      return true;
+    }
     authNotice = '';
+    setAuthAccessUI(true);
     showToast('E-mail confirmado. Sua conta GrafiFlow está pronta.');
     return true;
   } catch (error) {
@@ -1539,7 +1566,7 @@ async function handleAuthCallback() {
     authNotice = error.message || 'Não foi possível validar o link. Solicite uma nova mensagem.';
     renderAuthMode();
     updateAccountStatus();
-    document.getElementById('account-modal').hidden = false;
+    setAuthAccessUI(false);
     return true;
   }
 }
@@ -1559,9 +1586,9 @@ async function signOutCloudAccount() {
   authNotice = '';
   authMode = 'login';
   try { localStorage.removeItem(CLOUD_WORKSPACE_KEY); } catch { /* armazenamento local opcional */ }
-  document.getElementById('account-modal').hidden = true;
   renderAuthMode();
   updateAccountStatus();
+  setAuthAccessUI(false);
   showToast('Sessão encerrada. Os dados locais foram mantidos.');
 }
 
@@ -3480,7 +3507,9 @@ function handleClick(event) {
   if (id === 'find-stores-button') openMapSearch();
   if (id === 'account-button') openAccountModal();
   if (id === 'profile-use-account-address') copyAccountAddressToQuote();
-  if (id === 'close-account-modal' || id === 'cancel-account-modal') document.getElementById('account-modal').hidden = true;
+  if ((id === 'close-account-modal' || id === 'cancel-account-modal') && !document.body.classList.contains('auth-gate-active')) {
+    document.getElementById('account-modal').hidden = true;
+  }
   if (id === 'auth-mode-toggle') {
     authMode = authMode === 'signup' ? 'login' : 'signup';
     authNotice = '';
@@ -3575,7 +3604,7 @@ function initialize() {
     if (event.target.id === 'client-quote-modal') closeClientQuoteModal();
   });
   document.getElementById('account-modal')?.addEventListener('click', (event) => {
-    if (event.target.id === 'account-modal') event.currentTarget.hidden = true;
+    if (event.target.id === 'account-modal' && !document.body.classList.contains('auth-gate-active')) event.currentTarget.hidden = true;
   });
   window.addEventListener('afterprint', () => {
     document.body.classList.remove('client-quote-printing');
@@ -3597,12 +3626,28 @@ function initialize() {
   updateConnectionStatus();
   renderInstallButton();
   registerWebMcpTools();
-  loadPersistence().then(() => {
+  loadPersistence().then(async () => {
     if (!state.pieces.length) state.pieces.push(defaultPiece(state.materials[0]?.id));
     renderAll({ persistDraft: false });
-    handleAuthCallback().then((handled) => { if (!handled) restoreCloudAccount(); });
+    const handled = await handleAuthCallback();
+    if (handled) return;
+    await restoreCloudAccount();
+    const authenticated = authMode !== 'recovery-complete' && Boolean(cloudSession?.access_token && cloudSession?.user?.id);
+    if (!authenticated) {
+      if (authMode !== 'recovery-complete') authMode = 'login';
+      renderAuthMode();
+      updateAccountStatus();
+    }
+    setAuthAccessUI(authenticated);
+  }).catch((error) => {
+    console.error('Não foi possível preparar a tela inicial do GrafiFlow.', error);
+    authMode = 'login';
+    authNotice = 'Não foi possível carregar sua sessão. Entre novamente para continuar.';
+    renderAuthMode();
+    updateAccountStatus();
+    setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261007-phone-pdf-button-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v1').catch(() => undefined);
 }
 
 initialize();

@@ -5,14 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261007-phone-pdf-button-v1" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261028-auth-gate-v1" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261007-phone-pdf-button-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20261028-auth-gate-v1" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
-  <body>
-    <div class="app-shell">
+  <body class="auth-pending">
+    <div class="auth-bootstrap" id="auth-bootstrap-screen" aria-live="polite">
+      <div class="auth-bootstrap-brand"><img src="./grafiflow-icon-192-v3.png" alt="" /><span>GrafiFlow</span></div>
+      <div class="auth-loader" aria-hidden="true"></div>
+      <p>Preparando seu espaço...</p>
+    </div>
+    <div class="app-shell" hidden>
       <aside class="sidebar" aria-label="Navegação principal">
         <div class="brand">
           <img class="brand-logo-full" src="./grafiflow-logo.jpg" alt="GrafiFlow" />
@@ -213,36 +218,49 @@
     </div>
 
     <div class="modal-backdrop account-modal" id="account-modal" hidden>
-      <div class="modal-card account-modal-card" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
-        <div class="modal-heading">
-          <div><span class="section-kicker">CONTA GRAFIFLOW</span><h2 id="account-modal-title">Entrar e sincronizar</h2><p id="account-modal-status" class="muted-copy">Seus dados continuam salvos neste dispositivo.</p></div>
-          <button class="icon-button" id="close-account-modal" type="button" aria-label="Fechar">×</button>
-        </div>
-        <div id="auth-login-view">
-          <form id="account-auth-form" class="account-auth-form">
-            <label class="field" id="auth-name-field" hidden><span>Seu nome</span><input id="auth-full-name" type="text" autocomplete="name" placeholder="Nome profissional" /></label>
-            <label class="field" id="auth-workspace-field" hidden><span>Nome da empresa ou espaço</span><input id="auth-workspace-name" type="text" autocomplete="organization" placeholder="Ex.: Minha gráfica" /></label>
-            <label class="field"><span>E-mail</span><input id="auth-email" type="email" autocomplete="username" required placeholder="voce@empresa.com" /></label>
-            <label class="field"><span>Senha</span><input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="Sua senha" /></label>
-            <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar</button>
-          </form>
-          <div class="account-modal-actions">
-            <button class="text-button" id="auth-mode-toggle" type="button">Criar conta</button>
-            <button class="text-button" id="auth-forgot-button" type="button">Esqueci minha senha</button>
+      <div class="account-access-layout" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+        <aside class="auth-brand-panel" aria-label="Sobre o GrafiFlow">
+          <img class="auth-brand-logo" src="./grafiflow-logo.jpg" alt="GrafiFlow" />
+          <div class="auth-brand-copy">
+            <h1>Seus orçamentos,<br />em um fluxo mais claro.</h1>
+            <p>Calcule materiais, organize custos e gere propostas em um só lugar.</p>
           </div>
-        </div>
-        <form id="recovery-request-form" class="account-auth-form" hidden>
-          <label class="field"><span>E-mail cadastrado</span><input id="recover-email" type="email" autocomplete="email" required placeholder="voce@empresa.com" /></label>
-          <button class="primary-button account-submit" id="recover-submit" type="submit">Enviar link de recuperação</button>
-          <button class="text-button" id="auth-back-to-login" type="button">Voltar para entrar</button>
-        </form>
-        <form id="password-recovery-form" class="account-auth-form" hidden>
-          <label class="field"><span>Nova senha</span><input id="recovery-new-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo de 8 caracteres" /></label>
-          <label class="field"><span>Confirme a nova senha</span><input id="recovery-confirm-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Digite a nova senha novamente" /></label>
-          <button class="primary-button account-submit" id="recovery-submit" type="submit">Salvar nova senha</button>
-          <button class="text-button" id="recovery-back-to-login" type="button">Voltar para entrar</button>
-        </form>
-        <section id="account-settings-view" class="account-settings-view" hidden>
+          <img class="auth-print-visual" src="./login-print-roll-v1.png" alt="" aria-hidden="true" />
+          <p class="auth-brand-footer">GrafiFlow · orçamento gráfico</p>
+        </aside>
+        <section class="auth-form-region" aria-labelledby="account-modal-title">
+          <div class="auth-mobile-brand"><img src="./grafiflow-icon-192-v3.png" alt="" /><span>GrafiFlow</span></div>
+          <div class="modal-card account-modal-card">
+            <div class="modal-heading">
+              <div><h2 id="account-modal-title">Acesse o GrafiFlow</h2><p id="account-modal-status" class="muted-copy" aria-live="polite">Entre para continuar no seu espaço.</p></div>
+              <button class="icon-button" id="close-account-modal" type="button" aria-label="Fechar">×</button>
+            </div>
+            <div id="auth-login-view">
+              <form id="account-auth-form" class="account-auth-form">
+                <label class="field" id="auth-name-field" hidden><span>Seu nome</span><input id="auth-full-name" type="text" autocomplete="name" placeholder="Nome profissional" /></label>
+                <label class="field" id="auth-workspace-field" hidden><span>Nome da empresa ou espaço</span><input id="auth-workspace-name" type="text" autocomplete="organization" placeholder="Ex.: Minha gráfica" /></label>
+                <label class="field"><span>E-mail</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><input id="auth-email" type="email" autocomplete="username" required placeholder="voce@empresa.com" /></div></label>
+                <label class="field"><span>Senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg><input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="Sua senha" /></div></label>
+                <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar no GrafiFlow</button>
+              </form>
+              <div class="account-modal-actions">
+                <button class="text-button" id="auth-forgot-button" type="button">Esqueci minha senha</button>
+                <button class="text-button" id="auth-mode-toggle" type="button">Criar conta</button>
+              </div>
+              <p class="auth-sync-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="15" height="11" rx="2"></rect><path d="M7 20h6m-3-4v4"></path><rect x="16" y="10" width="5.5" height="10" rx="1.2"></rect></svg><span>Sua conta sincroniza seus dados entre dispositivos.</span></p>
+            </div>
+            <form id="recovery-request-form" class="account-auth-form" hidden>
+              <label class="field"><span>E-mail cadastrado</span><input id="recover-email" type="email" autocomplete="email" required placeholder="voce@empresa.com" /></label>
+              <button class="primary-button account-submit" id="recover-submit" type="submit">Enviar link de recuperação</button>
+              <button class="text-button" id="auth-back-to-login" type="button">Voltar para entrar</button>
+            </form>
+            <form id="password-recovery-form" class="account-auth-form" hidden>
+              <label class="field"><span>Nova senha</span><input id="recovery-new-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo de 8 caracteres" /></label>
+              <label class="field"><span>Confirme a nova senha</span><input id="recovery-confirm-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Digite a nova senha novamente" /></label>
+              <button class="primary-button account-submit" id="recovery-submit" type="submit">Salvar nova senha</button>
+              <button class="text-button" id="recovery-back-to-login" type="button">Voltar para entrar</button>
+            </form>
+            <section id="account-settings-view" class="account-settings-view" hidden>
           <p class="account-email-line">Conta: <strong id="account-email-display"></strong></p>
           <form id="account-profile-form" class="account-auth-form">
             <section class="client-form-section">
@@ -286,9 +304,11 @@
             </section>
           </form>
           <div class="account-modal-actions"><button class="secondary-button" id="auth-sync-now" type="button">Sincronizar agora</button><button class="secondary-button" id="auth-signout" type="button">Sair da conta</button></div>
+            </section>
+            <div class="account-modal-actions account-close-actions"><button class="secondary-button" id="cancel-account-modal" type="button">Fechar</button></div>
+            <p class="account-offline-note">O GrafiFlow funciona offline. A sincronização acontece quando houver internet; seus dados locais e o backup continuam disponíveis.</p>
+          </div>
         </section>
-        <div class="account-modal-actions account-close-actions"><button class="secondary-button" id="cancel-account-modal" type="button">Fechar</button></div>
-        <p class="account-offline-note">O GrafiFlow funciona offline. A sincronização acontece quando houver internet; seus dados locais e o backup continuam disponíveis.</p>
       </div>
     </div>
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
@@ -311,7 +331,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./config.js?v=20261007-phone-pdf-button-v1"></script>
-    <script type="module" src="./app.js?v=20261007-phone-pdf-button-v1"></script>
+    <script src="./config.js?v=20261028-auth-gate-v1"></script>
+    <script type="module" src="./app.js?v=20261028-auth-gate-v1"></script>
   </body>
 </html>
