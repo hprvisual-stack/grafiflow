@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261029-session-persistence-v1" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261029-customers-v1" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261029-session-persistence-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20261029-customers-v1" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -30,6 +30,9 @@
           </button>
           <button class="nav-item" data-view="quotes-view" type="button">
             <span class="nav-icon">▤</span><span>Orçamentos</span>
+          </button>
+          <button class="nav-item" data-view="customers-view" type="button">
+            <span class="nav-icon">♙</span><span>Clientes</span>
           </button>
           <button class="nav-item" data-view="materials-view" type="button">
             <span class="nav-icon">◈</span><span>Materiais</span>
@@ -83,6 +86,8 @@
               <div class="quote-name-wrap">
                 <label for="quote-name">Nome do orçamento</label>
                 <input id="quote-name" type="text" placeholder="Ex.: Fachada Loja Central" autocomplete="off" />
+                <label for="quote-customer-select">Cliente</label>
+                <select id="quote-customer-select"><option value="">Sem cliente vinculado</option></select>
               </div>
             </div>
 
@@ -197,8 +202,17 @@
           </section>
 
           <section class="view" id="quotes-view" aria-labelledby="quotes-heading">
-            <div class="view-header"><div><p class="section-kicker">HISTÓRICO LOCAL</p><h2 id="quotes-heading">Orçamentos salvos</h2><p class="muted-copy">Seus dados ficam neste dispositivo. Use o backup para transferir entre aparelhos.</p></div><button class="primary-button" id="quotes-new-button" type="button">+ Novo orçamento</button></div>
+            <div class="view-header"><div><p class="section-kicker">HISTÓRICO</p><h2 id="quotes-heading">Orçamentos salvos</h2><p class="muted-copy">Acompanhe valores, lucros e aprovações. Entre na mesma conta GrafiFlow para sincronizar entre dispositivos.</p></div><button class="primary-button" id="quotes-new-button" type="button">+ Novo orçamento</button></div>
             <div id="quotes-list" class="quotes-list"></div>
+          </section>
+
+          <section class="view" id="customers-view" aria-labelledby="customers-heading">
+            <div class="view-header"><div><p class="section-kicker">RELACIONAMENTO</p><h2 id="customers-heading">Clientes</h2><p class="muted-copy">Salve os dados dos clientes e acompanhe orçamentos, aprovações, faturamento e lucro. Com a conta conectada, a lista sincroniza entre PWA e SaaS web.</p></div><button class="primary-button" id="customer-new-button" type="button">+ Novo cliente</button></div>
+            <div class="customers-layout">
+              <section class="panel customer-list-panel"><div class="panel-heading"><div><span class="section-kicker">CARTEIRA</span><h3>Clientes cadastrados</h3></div><span id="customer-count" class="info-badge">0 clientes</span></div><label class="field customer-search-field"><span>Buscar por nome, telefone, e-mail ou CPF/CNPJ</span><input id="customer-search" type="search" placeholder="Digite para filtrar" autocomplete="off" /></label><div id="customers-list" class="customers-list"></div></section>
+              <section class="panel customer-detail-panel"><div id="customer-detail"></div></section>
+            </div>
+            <section class="panel customer-form-panel" id="customer-form-panel" hidden><div class="panel-heading"><div><span class="section-kicker">CADASTRO</span><h3 id="customer-form-title">Novo cliente</h3><p class="muted-copy">Os dados de contato e endereço podem preencher automaticamente o orçamento.</p></div><button class="icon-button" id="customer-cancel-button" type="button" aria-label="Fechar formulário">×</button></div><form id="customer-form" class="form-grid three-columns"><input id="customer-id" type="hidden" /><label class="field full-width"><span>Nome ou empresa</span><input id="customer-name" required maxlength="160" type="text" autocomplete="name" placeholder="Nome do cliente" /></label><label class="field"><span>Telefone / WhatsApp</span><input id="customer-phone" maxlength="40" type="tel" autocomplete="tel" placeholder="(00) 00000-0000" /></label><label class="field"><span>E-mail</span><input id="customer-email" maxlength="160" type="email" autocomplete="email" placeholder="cliente@exemplo.com" /></label><label class="field"><span>CPF / CNPJ</span><input id="customer-document" maxlength="24" type="text" placeholder="Opcional" /></label><label class="field full-width"><span>Endereço</span><input id="customer-address" maxlength="240" type="text" autocomplete="street-address" placeholder="Rua, número, bairro, cidade e CEP" /></label><label class="field full-width"><span>Observações</span><textarea id="customer-notes" maxlength="600" rows="3" placeholder="Preferências e informações úteis"></textarea></label><div class="form-actions full-width"><button class="secondary-button" id="customer-cancel-button-form" type="button">Cancelar</button><button class="primary-button" type="submit">Salvar cliente</button></div></form></section>
           </section>
 
           <section class="view" id="materials-view" aria-labelledby="materials-heading">
@@ -330,7 +344,7 @@
         <div class="client-quote-workspace">
           <section class="client-quote-editor" aria-label="Dados do orçamento para o cliente">
             <div class="client-form-section"><span class="section-kicker">IDENTIFICAÇÃO</span><h3>Quem está enviando?</h3><div class="form-grid two-columns client-form-grid"><label class="field full-width"><span>Nome da empresa ou profissional</span><input data-client-field="businessName" id="client-business-name" type="text" placeholder="Ex.: Helder Comunicação Visual" /></label><label class="field"><span>Telefone / WhatsApp</span><input data-client-field="businessPhone" id="client-business-phone" type="text" placeholder="(00) 00000-0000" /></label><label class="field"><span>E-mail</span><input data-client-field="businessEmail" id="client-business-email" type="email" placeholder="contato@empresa.com" /></label><label class="field"><span>CPF/CNPJ</span><input data-client-field="businessDocument" id="client-business-document" type="text" /></label><label class="field full-width"><span>Endereço comercial</span><input data-client-field="businessAddress" id="client-business-address" type="text" /></label></div></div>
-            <div class="client-form-section"><span class="section-kicker">CLIENTE</span><h3>Para quem é o orçamento?</h3><div class="form-grid two-columns client-form-grid"><label class="field full-width"><span>Nome do cliente</span><input data-client-field="clientName" id="client-name" type="text" placeholder="Nome ou empresa do cliente" /></label><label class="field full-width"><span>Telefone / WhatsApp do cliente</span><input data-client-field="clientContact" id="client-contact" type="text" placeholder="Opcional" /></label></div></div>
+            <div class="client-form-section"><span class="section-kicker">CLIENTE</span><h3>Para quem é o orçamento?</h3><div class="form-grid two-columns client-form-grid"><label class="field full-width"><span>Nome do cliente</span><input data-client-field="clientName" id="client-name" type="text" placeholder="Nome ou empresa do cliente" /></label><label class="field"><span>Telefone / WhatsApp</span><input data-client-field="clientContact" id="client-contact" type="text" placeholder="Opcional" /></label><label class="field"><span>E-mail</span><input data-client-field="clientEmail" id="client-email" type="email" placeholder="Opcional" /></label><label class="field"><span>CPF / CNPJ</span><input data-client-field="clientDocument" id="client-document" type="text" placeholder="Opcional" /></label><label class="field full-width"><span>Endereço</span><input data-client-field="clientAddress" id="client-address" type="text" placeholder="Opcional" /></label></div></div>
             <div class="client-form-section"><span class="section-kicker">CONDIÇÕES</span><h3>Combine os detalhes</h3><div class="form-grid two-columns client-form-grid"><label class="field"><span>Validade do orçamento</span><input data-client-field="validity" id="client-validity" type="text" placeholder="Ex.: 7 dias" /></label><label class="field"><span>Prazo de produção/instalação</span><input data-client-field="deadline" id="client-deadline" type="text" placeholder="Ex.: até 5 dias úteis" /></label><label class="field full-width"><span>Forma de pagamento</span><input data-client-field="paymentTerms" id="client-payment-terms" type="text" placeholder="Ex.: 50% de entrada e saldo na entrega" /></label><label class="field full-width"><span>Observações</span><textarea data-client-field="notes" id="client-notes" rows="3" placeholder="Informações importantes para o cliente"></textarea></label></div></div>
           </section>
           <section class="client-quote-preview-wrap" aria-label="Prévia do documento"><div id="client-quote-preview" class="client-quote-preview"></div></section>
@@ -338,7 +352,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./config.js?v=20261029-session-persistence-v1"></script>
-    <script type="module" src="./app.js?v=20261029-session-persistence-v1"></script>
+    <script src="./config.js?v=20261029-customers-v1"></script>
+    <script type="module" src="./app.js?v=20261029-customers-v1"></script>
   </body>
 </html>

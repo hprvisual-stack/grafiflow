@@ -1,6 +1,6 @@
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const DB_NAME = 'nesto-local-v1';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const CLOUD_SESSION_KEY = 'grafiflow.auth.v1';
 const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
@@ -63,8 +63,12 @@ const defaultClientQuote = () => ({
   businessEmail: '',
   businessDocument: '',
   businessAddress: '',
+  customerId: '',
   clientName: '',
   clientContact: '',
+  clientEmail: '',
+  clientDocument: '',
+  clientAddress: '',
   validity: '7 dias',
   validityIsDefault: true,
   deadline: '',
@@ -101,6 +105,8 @@ let savedMaterials = [];
 let savedCatalogItems = [];
 let savedMaterialVolumeTiers = [];
 let savedQuotes = [];
+let savedCustomers = [];
+let selectedCustomerId = '';
 let computed = emptyComputed();
 let dbPromise;
 let draftTimer;
@@ -271,6 +277,7 @@ function openDatabase() {
       const db = request.result;
       if (!db.objectStoreNames.contains('quotes')) db.createObjectStore('quotes', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('materials')) db.createObjectStore('materials', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('customers')) db.createObjectStore('customers', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
       if (!db.objectStoreNames.contains('syncQueue')) db.createObjectStore('syncQueue', { keyPath: 'id' });
     };
@@ -305,7 +312,7 @@ async function storePut(storeName, value, { fromCloud = false } = {}) {
   const db = await openDatabase();
   if (!db) return;
   let storedValue = value;
-  if (!fromCloud && ['materials', 'quotes'].includes(storeName)) {
+  if (!fromCloud && ['materials', 'quotes', 'customers'].includes(storeName)) {
     const existing = await storeGet(storeName, value.id);
     storedValue = {
       ...value,
@@ -385,12 +392,13 @@ function recordIdentity(storeName, value) {
   if (storeName === 'settings' && value?.key === 'draft') return { type: 'draft', id: 'draft' };
   if (storeName === 'materials' && value?.id) return { type: catalogRecordType(value.catalogCategory) || 'material', id: String(value.id) };
   if (storeName === 'quotes' && value?.id) return { type: 'quote', id: String(value.id) };
+  if (storeName === 'customers' && value?.id) return { type: 'customer', id: String(value.id) };
   return null;
 }
 
 async function queueCloudMutation(storeName, value, { recordId = '', recordType = '', deleted = false, baseUpdatedAt = null } = {}) {
-  if (!['settings', 'materials', 'quotes'].includes(storeName)) return;
-  const inferredType = storeName === 'materials' ? 'material' : 'quote';
+  if (!['settings', 'materials', 'quotes', 'customers'].includes(storeName)) return;
+  const inferredType = storeName === 'materials' ? 'material' : storeName === 'quotes' ? 'quote' : 'customer';
   const identity = value
     ? recordIdentity(storeName, value)
     : storeName === 'settings' ? null : { type: recordType || inferredType, id: String(recordId) };
@@ -427,7 +435,7 @@ function hasMeaningfulDraft(draftRecord) {
   if (draft.quoteId || String(draft.quoteName || '').trim()) return true;
 
   const client = draft.clientQuote || {};
-  if (['businessName', 'businessPhone', 'businessEmail', 'clientName', 'clientContact', 'notes'].some((key) => String(client[key] || '').trim())) return true;
+  if (['businessName', 'businessPhone', 'businessEmail', 'clientName', 'clientContact', 'clientEmail', 'clientDocument', 'clientAddress', 'notes'].some((key) => String(client[key] || '').trim())) return true;
   if (client.validity && client.validity !== '7 dias') return true;
   if (client.paymentTerms && client.paymentTerms !== '50% de entrada e saldo na entrega') return true;
 
@@ -781,8 +789,8 @@ async function getWorkspaceMembership() {
 }
 
 async function queueLocalDataForFirstSync() {
-  const [draft, materials, quotes] = await Promise.all([
-    storeGet('settings', 'draft'), storeGetAll('materials'), storeGetAll('quotes'),
+  const [draft, materials, quotes, customers] = await Promise.all([
+    storeGet('settings', 'draft'), storeGetAll('materials'), storeGetAll('quotes'), storeGetAll('customers'),
   ]);
   const queuedDraft = await storeGet('syncQueue', 'draft:draft');
   const queueIsNewer = queuedDraft && (!draft || (new Date(queuedDraft.updatedAt).getTime() > new Date(draft.updatedAt || 0).getTime()));
@@ -794,6 +802,7 @@ async function queueLocalDataForFirstSync() {
   }
   for (const material of materials) await queueCloudMutation('materials', material);
   for (const quote of quotes) await queueCloudMutation('quotes', quote);
+  for (const customer of customers) await queueCloudMutation('customers', customer);
 }
 
 async function localRecordTimestamp(recordType, recordId) {
@@ -803,6 +812,7 @@ async function localRecordTimestamp(recordType, recordId) {
   if (recordType === 'draft') value = await storeGet('settings', 'draft');
   if (recordType === 'material' || catalogCategoryFromRecordType(recordType)) value = await storeGet('materials', recordId);
   if (recordType === 'quote') value = await storeGet('quotes', recordId);
+  if (recordType === 'customer') value = await storeGet('customers', recordId);
   if (recordType === 'material' && (value?.catalogCategory || String(recordId).startsWith('catalog:'))) {
     const category = value?.catalogCategory;
     const categoryTypes = category ? [catalogRecordType(category)] : Object.values(CATALOG_RECORD_TYPES);
@@ -899,6 +909,19 @@ async function preserveRejectedCloudMutation(item) {
     }
     return true;
   }
+  if (item.recordType === 'customer' && item.payload.id) {
+    const customer = {
+      ...clone(item.payload),
+      id: uid('customer-conflict'),
+      name: `Cópia de conflito — ${item.payload.name || 'Cliente'}`,
+      updatedAt: now,
+      isConflictCopy: true,
+    };
+    await storePut('customers', customer);
+    savedCustomers = [customer, ...savedCustomers].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    renderCustomers();
+    return true;
+  }
   return false;
 }
 
@@ -908,11 +931,14 @@ async function applyCloudRecords(records) {
   let materialsChanged = false;
   let catalogChanged = false;
   let quotesChanged = false;
+  let customersChanged = false;
   for (const record of records || []) {
     const cloudTime = new Date(record.updated_at || 0).getTime() || 0;
     if (await localRecordTimestamp(record.record_type, record.record_id) > cloudTime) continue;
     const isCatalogType = Boolean(catalogCategoryFromRecordType(record.record_type));
-    const storeName = record.record_type === 'draft' ? 'settings' : (record.record_type === 'material' || isCatalogType) ? 'materials' : 'quotes';
+    const storeName = record.record_type === 'draft' ? 'settings'
+      : (record.record_type === 'material' || isCatalogType) ? 'materials'
+        : record.record_type === 'customer' ? 'customers' : 'quotes';
     const localId = record.record_type === 'draft' ? 'draft' : record.record_id;
     const local = await storeGet(storeName, localId);
     const catalogCategory = catalogCategoryForRecord(record) || local?.catalogCategory || '';
@@ -938,6 +964,11 @@ async function applyCloudRecords(records) {
       if (record.record_type === 'quote') {
         savedQuotes = savedQuotes.filter((item) => item.id !== record.record_id);
         quotesChanged = true;
+      }
+      if (record.record_type === 'customer') {
+        savedCustomers = savedCustomers.filter((item) => item.id !== record.record_id);
+        if (selectedCustomerId === record.record_id) selectedCustomerId = '';
+        customersChanged = true;
       }
       if (isCatalogItem) {
         savedCatalogItems = savedCatalogItems.filter((item) => item.id !== record.record_id);
@@ -982,6 +1013,11 @@ async function applyCloudRecords(records) {
       await storePut('quotes', quote, { fromCloud: true });
       savedQuotes = [quote, ...savedQuotes.filter((item) => item.id !== record.record_id)].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
       quotesChanged = true;
+    } else if (record.record_type === 'customer' && payload?.id) {
+      const customer = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at };
+      await storePut('customers', customer, { fromCloud: true });
+      savedCustomers = [customer, ...savedCustomers.filter((item) => item.id !== record.record_id)].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      customersChanged = true;
     }
   }
   if (draftChanged) {
@@ -993,7 +1029,14 @@ async function applyCloudRecords(records) {
       if (!document.getElementById('material-picker-modal')?.hidden) renderMaterialPicker();
     }
     if (catalogChanged) renderCatalogItems();
-    if (quotesChanged) renderQuotes();
+    if (quotesChanged) {
+      renderQuotes();
+      renderCustomers();
+    }
+    if (customersChanged) {
+      renderCustomers();
+      renderCustomerSelect();
+    }
   }
   if (draftChanged && catalogChanged) renderCatalogItems();
   return draftDeferred;
@@ -1806,16 +1849,27 @@ async function signOutCloudAccount() {
 
 async function loadPersistence() {
   try {
-    const [draft, materials, quotes] = await Promise.all([
+    const [draft, materials, quotes, customers] = await Promise.all([
       storeGet('settings', 'draft'),
       storeGetAll('materials'),
       storeGetAll('quotes'),
+      storeGetAll('customers'),
     ]);
     if (draft?.value) hydrateState(draft.value, { inferDefaultText: !draft.value.quoteId });
     savedCatalogItems = materials.filter((item) => item.catalogCategory).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     savedMaterials = materials.filter((item) => !item.catalogCategory).map(normalizeMaterial);
     renderCatalogItems();
     if (quotes.length) savedQuotes = quotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    savedCustomers = customers.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    selectedCustomerId = savedCustomers[0]?.id || '';
+    for (const quote of savedQuotes) {
+      const customerId = inferLegacyCustomerId(quote);
+      if (customerId && !quote.customerId) {
+        const linkedQuote = { ...quote, customerId };
+        await storePut('quotes', linkedQuote);
+        Object.assign(quote, linkedQuote);
+      }
+    }
   } catch (error) {
     console.warn('Não foi possível abrir o armazenamento local.', error);
     showToast('O cálculo funciona, mas o armazenamento local não pôde ser aberto.', 'error');
@@ -2085,11 +2139,212 @@ function renderQuotes() {
   }
   container.innerHTML = savedQuotes.map((quote) => `
     <article class="quote-card">
-      <div><div class="quote-card-title">${escapeHtml(quote.name || 'Orçamento sem nome')}</div><div class="quote-card-meta">Atualizado em ${escapeHtml(formatDate(quote.updatedAt))} · ${quote.piecesCount || 0} peça(s) · ${quote.materialsCount || 0} material(is)</div></div>
-      <div class="quote-card-figure"><div class="quote-card-price">${formatMoney(num(quote.salePrice))}</div><div class="quote-card-label">venda</div></div>
-      <div class="quote-actions"><button class="secondary-button small-button" type="button" data-action="load-quote" data-id="${escapeHtml(quote.id)}">Abrir</button><button class="icon-button" type="button" data-action="delete-quote" data-id="${escapeHtml(quote.id)}" title="Excluir orçamento">×</button></div>
+      <div><div class="quote-card-title">${escapeHtml(quote.name || 'Orçamento sem nome')}</div><div class="quote-card-meta">${escapeHtml(quote.snapshot?.clientQuote?.clientName || 'Sem cliente vinculado')} · ${escapeHtml(formatDate(quote.updatedAt))} · ${quote.piecesCount || 0} peça(s)</div></div>
+      <div class="quote-card-figure"><div class="quote-card-price">${formatMoney(num(quote.salePrice))}</div><div class="quote-card-label">venda · lucro ${quote.status === 'approved' ? 'realizado' : 'estimado'} ${formatMoney(num(quote.profit))}</div></div>
+      <div class="quote-actions"><span class="quote-status ${quote.status === 'approved' ? 'approved' : ''}">${quote.status === 'approved' ? 'Aprovado' : 'Pendente'}</span><button class="secondary-button small-button" type="button" data-action="toggle-quote-approval" data-id="${escapeHtml(quote.id)}">${quote.status === 'approved' ? 'Reabrir' : 'Aprovar'}</button><button class="secondary-button small-button" type="button" data-action="load-quote" data-id="${escapeHtml(quote.id)}">Abrir</button><button class="icon-button" type="button" data-action="delete-quote" data-id="${escapeHtml(quote.id)}" title="Excluir orçamento">×</button></div>
     </article>
   `).join('');
+}
+
+function normalizeCustomerMatch(value) {
+  return String(value || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
+}
+
+function inferLegacyCustomerId(quote) {
+  if (quote.customerId) return quote.customerId;
+  const quoteClient = quote.snapshot?.clientQuote || {};
+  const name = normalizeCustomerMatch(quoteClient.clientName);
+  if (!name) return '';
+  const phone = String(quoteClient.clientContact || '').replace(/\D/g, '');
+  const sameName = savedCustomers.filter((entry) => normalizeCustomerMatch(entry.name) === name);
+  const matching = phone ? sameName.filter((entry) => String(entry.phone || '').replace(/\D/g, '') === phone) : sameName;
+  return matching.length === 1 ? matching[0].id : '';
+}
+
+function customerQuoteMap() {
+  const grouped = new Map(savedCustomers.map((customer) => [customer.id, []]));
+  for (const quote of savedQuotes) {
+    const customerId = inferLegacyCustomerId(quote);
+    if (grouped.has(customerId)) grouped.get(customerId).push(quote);
+  }
+  for (const quotes of grouped.values()) quotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  return grouped;
+}
+
+function renderCustomerSelect() {
+  const select = document.getElementById('quote-customer-select');
+  if (!select) return;
+  const selectedId = state.clientQuote.customerId || '';
+  select.innerHTML = '<option value="">Sem cliente vinculado</option>' + savedCustomers.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>`).join('');
+  select.value = savedCustomers.some((customer) => customer.id === selectedId) ? selectedId : '';
+}
+
+function customerTotals(customer, quotesByCustomer = customerQuoteMap()) {
+  const quotes = quotesByCustomer.get(customer.id) || [];
+  const approved = quotes.filter((quote) => quote.status === 'approved');
+  return {
+    quotes,
+    approvedCount: approved.length,
+    quotedValue: quotes.reduce((sum, quote) => sum + num(quote.salePrice), 0),
+    approvedValue: approved.reduce((sum, quote) => sum + num(quote.salePrice), 0),
+    approvedProfit: approved.reduce((sum, quote) => sum + num(quote.profit), 0),
+  };
+}
+
+function renderCustomers() {
+  const list = document.getElementById('customers-list');
+  const detail = document.getElementById('customer-detail');
+  if (!list || !detail) return;
+  const count = document.getElementById('customer-count');
+  if (count) count.textContent = `${savedCustomers.length} ${savedCustomers.length === 1 ? 'cliente' : 'clientes'}`;
+  const quotesByCustomer = customerQuoteMap();
+  const search = normalizeCustomerMatch(document.getElementById('customer-search')?.value);
+  const customers = savedCustomers.filter((customer) => !search || [customer.name, customer.phone, customer.email, customer.document].some((value) => normalizeCustomerMatch(value).includes(search)));
+  if (!customers.some((customer) => customer.id === selectedCustomerId)) selectedCustomerId = customers[0]?.id || '';
+  list.innerHTML = customers.length ? customers.map((customer) => {
+    const total = customerTotals(customer, quotesByCustomer);
+    return `<button class="customer-list-item ${customer.id === selectedCustomerId ? 'active' : ''}" type="button" data-action="select-customer" data-id="${escapeHtml(customer.id)}"><span class="customer-avatar">${escapeHtml((customer.name || '?').trim().charAt(0).toUpperCase())}</span><span class="customer-list-copy"><strong>${escapeHtml(customer.name)}</strong><small>${total.quotes.length} orçamento(s) · ${total.approvedCount} aprovado(s)</small></span></button>`;
+  }).join('') : '<div class="empty-state customer-empty"><strong>Nenhum cliente encontrado</strong><p>Cadastre um cliente ou ajuste a busca.</p></div>';
+  const customer = savedCustomers.find((entry) => entry.id === selectedCustomerId);
+  if (!customer) {
+    detail.innerHTML = '<div class="empty-state"><strong>Selecione um cliente</strong><p>O histórico de orçamentos, aprovações e lucro aparecerá aqui.</p></div>';
+    return;
+  }
+  const totals = customerTotals(customer, quotesByCustomer);
+  const contact = [customer.phone, customer.email].filter(Boolean).map(escapeHtml).join(' · ');
+  const address = [customer.document ? `CPF/CNPJ: ${customer.document}` : '', customer.address].filter(Boolean).map(escapeHtml).join(' · ');
+  const notes = String(customer.notes || '').trim();
+  const history = totals.quotes.length ? totals.quotes.map((quote) => `
+    <article class="customer-history-row">
+      <div class="customer-history-copy"><strong>${escapeHtml(quote.name || 'Orçamento sem nome')}</strong><small>${escapeHtml(formatDate(quote.updatedAt))} · Lucro ${quote.status === 'approved' ? 'realizado' : 'estimado'} ${formatMoney(num(quote.profit))}</small></div>
+      <div class="customer-history-value"><strong>${formatMoney(num(quote.salePrice))}</strong><span class="quote-status ${quote.status === 'approved' ? 'approved' : ''}">${quote.status === 'approved' ? 'Aprovado' : 'Pendente'}</span></div>
+      <div class="customer-history-actions"><button class="secondary-button small-button" type="button" data-action="toggle-quote-approval" data-id="${escapeHtml(quote.id)}">${quote.status === 'approved' ? 'Reabrir' : 'Aprovar'}</button><button class="secondary-button small-button" type="button" data-action="load-quote" data-id="${escapeHtml(quote.id)}">Abrir</button></div>
+    </article>`).join('') : '<div class="empty-state customer-empty"><strong>Sem histórico de orçamento</strong><p>Ao salvar um orçamento vinculado, ele aparecerá nesta ficha.</p></div>';
+  detail.innerHTML = `
+    <div class="customer-detail-header"><div class="customer-detail-identity"><span class="customer-avatar large">${escapeHtml((customer.name || '?').trim().charAt(0).toUpperCase())}</span><div><span class="section-kicker">FICHA DO CLIENTE</span><h3>${escapeHtml(customer.name)}</h3><p>${contact || 'Sem telefone ou e-mail'}</p>${address ? `<small>${address}</small>` : ''}${notes ? `<small class="customer-notes">${escapeHtml(notes)}</small>` : ''}</div></div><div class="customer-detail-actions"><button class="secondary-button small-button" type="button" data-action="start-customer-quote" data-id="${escapeHtml(customer.id)}">+ Orçamento</button><button class="secondary-button small-button" type="button" data-action="edit-customer" data-id="${escapeHtml(customer.id)}">Editar</button><button class="icon-button" type="button" data-action="delete-customer" data-id="${escapeHtml(customer.id)}" title="Excluir cliente">×</button></div></div>
+    <div class="customer-metrics"><article><span>Orçamentos feitos</span><strong>${totals.quotes.length}</strong></article><article><span>Aprovados</span><strong>${totals.approvedCount}</strong></article><article><span>Total orçado</span><strong>${formatMoney(totals.quotedValue)}</strong></article><article class="customer-metric-approved"><span>Valor aprovado</span><strong>${formatMoney(totals.approvedValue)}</strong></article><article class="customer-metric-profit"><span>Lucro aprovado</span><strong>${formatMoney(totals.approvedProfit)}</strong></article></div>
+    <div class="customer-history-heading"><div><span class="section-kicker">RELACIONAMENTO</span><h4>Histórico de orçamentos</h4></div><span>${totals.approvedCount} de ${totals.quotes.length} aprovados</span></div>
+    <div class="customer-history-list">${history}</div>`;
+}
+
+function resetCustomerForm() {
+  const form = document.getElementById('customer-form');
+  if (form) form.reset();
+  setValue('customer-id', '');
+  const panel = document.getElementById('customer-form-panel');
+  if (panel) panel.hidden = true;
+  const title = document.getElementById('customer-form-title');
+  if (title) title.textContent = 'Novo cliente';
+}
+
+function openCustomerForm(customer = null) {
+  resetCustomerForm();
+  const panel = document.getElementById('customer-form-panel');
+  if (!panel) return;
+  if (customer) {
+    setValue('customer-id', customer.id);
+    setValue('customer-name', customer.name);
+    setValue('customer-phone', customer.phone);
+    setValue('customer-email', customer.email);
+    setValue('customer-document', customer.document);
+    setValue('customer-address', customer.address);
+    setValue('customer-notes', customer.notes);
+    const title = document.getElementById('customer-form-title');
+    if (title) title.textContent = 'Editar cliente';
+  }
+  panel.hidden = false;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('customer-name')?.focus({ preventScroll: true });
+}
+
+function applyCustomerToQuoteDraft(customer, { persist = true } = {}) {
+  state.clientQuote.customerId = customer?.id || '';
+  if (customer) {
+    state.clientQuote.clientName = customer.name || '';
+    state.clientQuote.clientContact = customer.phone || '';
+    state.clientQuote.clientEmail = customer.email || '';
+    state.clientQuote.clientDocument = customer.document || '';
+    state.clientQuote.clientAddress = customer.address || '';
+  }
+  renderCustomerSelect();
+  renderClientQuoteForm();
+  renderClientQuotePreview();
+  if (persist) persistDraftSoon();
+}
+
+async function submitCustomer(event) {
+  event.preventDefault();
+  const id = document.getElementById('customer-id')?.value || uid('customer');
+  const existing = savedCustomers.find((customer) => customer.id === id);
+  const name = document.getElementById('customer-name')?.value.trim() || '';
+  if (!name) {
+    showToast('Informe o nome do cliente.', 'error');
+    document.getElementById('customer-name')?.focus();
+    return;
+  }
+  const customer = {
+    id,
+    name,
+    phone: document.getElementById('customer-phone')?.value.trim() || '',
+    email: document.getElementById('customer-email')?.value.trim() || '',
+    document: document.getElementById('customer-document')?.value.trim() || '',
+    address: document.getElementById('customer-address')?.value.trim() || '',
+    notes: document.getElementById('customer-notes')?.value.trim() || '',
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await storePut('customers', customer);
+    savedCustomers = [customer, ...savedCustomers.filter((entry) => entry.id !== id)].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    selectedCustomerId = id;
+    if (state.clientQuote.customerId === id) applyCustomerToQuoteDraft(customer);
+    resetCustomerForm();
+    renderCustomers();
+    renderCustomerSelect();
+    showToast(existing ? 'Cliente atualizado.' : 'Cliente salvo.');
+  } catch (error) {
+    console.error(error);
+    showToast('Não foi possível salvar o cliente.', 'error');
+  }
+}
+
+async function deleteCustomer(id) {
+  const customer = savedCustomers.find((entry) => entry.id === id);
+  if (!customer || !window.confirm(`Excluir ${customer.name} da lista de clientes? Os orçamentos salvos serão mantidos, mas deixarão de aparecer agrupados nesta ficha.`)) return;
+  try {
+    await storeDelete('customers', id);
+    savedCustomers = savedCustomers.filter((entry) => entry.id !== id);
+    if (selectedCustomerId === id) selectedCustomerId = savedCustomers[0]?.id || '';
+    if (state.clientQuote.customerId === id) state.clientQuote.customerId = '';
+    renderCustomers();
+    renderCustomerSelect();
+    persistDraftSoon();
+    showToast('Cliente removido; os orçamentos foram mantidos.');
+  } catch (error) {
+    console.error(error);
+    showToast('Não foi possível excluir o cliente.', 'error');
+  }
+}
+
+async function setQuoteApproval(id) {
+  const quote = savedQuotes.find((entry) => entry.id === id);
+  if (!quote) return;
+  const approved = quote.status !== 'approved';
+  if (approved && num(quote.salePrice) <= 0) {
+    showToast('Defina um valor de venda antes de aprovar este orçamento.', 'error');
+    return;
+  }
+  const updated = { ...quote, status: approved ? 'approved' : 'pending', approvedAt: approved ? new Date().toISOString() : null, updatedAt: new Date().toISOString() };
+  try {
+    await storePut('quotes', updated);
+    savedQuotes = [updated, ...savedQuotes.filter((entry) => entry.id !== id)].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    renderQuotes();
+    renderCustomers();
+    showToast(approved ? 'Orçamento marcado como aprovado.' : 'Orçamento voltou para pendente.');
+  } catch (error) {
+    console.error(error);
+    showToast('Não foi possível atualizar a aprovação do orçamento.', 'error');
+  }
 }
 
 function renderSavedMaterialVolumePricing() {
@@ -2387,6 +2642,9 @@ function renderClientQuoteForm() {
   setValue('client-business-address', data.businessAddress);
   setValue('client-name', data.clientName);
   setValue('client-contact', data.clientContact);
+  setValue('client-email', data.clientEmail);
+  setValue('client-document', data.clientDocument);
+  setValue('client-address', data.clientAddress);
   setValue('client-validity', data.validity);
   setClearOnFocus('client-validity', data.validityIsDefault);
   setValue('client-deadline', data.deadline);
@@ -2417,6 +2675,7 @@ function renderClientQuotePreview() {
   ].filter(Boolean).join('');
   const contact = [String(data.businessPhone || '').trim(), String(data.businessEmail || '').trim()].filter(Boolean).join(' · ');
   const businessDetails = [String(data.businessDocument || '').trim(), String(data.businessAddress || '').trim()].filter(Boolean).join(' · ');
+  const clientDetails = [String(data.clientContact || '').trim(), String(data.clientEmail || '').trim(), String(data.clientDocument || '').trim(), String(data.clientAddress || '').trim()].filter(Boolean).join(' · ');
   const notesText = String(data.notes || '').trim();
   const notes = notesText ? `<p class="client-doc-notes"><strong>Observações:</strong><br />${escapeHtml(notesText)}</p>` : '';
   const quoteNumber = state.quoteId ? state.quoteId.slice(-6).toUpperCase() : 'RASCUNHO';
@@ -2426,7 +2685,7 @@ function renderClientQuotePreview() {
         <div class="client-doc-brand"><span class="client-doc-brand-mark">${escapeHtml(businessName.charAt(0).toUpperCase())}</span><div><div class="client-doc-business">${escapeHtml(businessName)}</div>${contact ? `<div class="client-doc-contact">${escapeHtml(contact)}</div>` : ''}${businessDetails ? `<div class="client-doc-business-detail">${escapeHtml(businessDetails)}</div>` : ''}</div></div>
         <div><div class="client-doc-type">ORÇAMENTO</div><div class="client-doc-number">Nº ${escapeHtml(quoteNumber)} · ${escapeHtml(new Date().toLocaleDateString('pt-BR'))}</div></div>
       </header>
-      <section class="client-doc-intro"><h3>${escapeHtml(quoteTitle)}</h3><p>${escapeHtml(greeting)}</p></section>
+      <section class="client-doc-intro"><h3>${escapeHtml(quoteTitle)}</h3><p>${escapeHtml(greeting)}${clientDetails ? `<br />${escapeHtml(clientDetails)}` : ''}</p></section>
       <section><div class="client-doc-section-label">Descrição do serviço</div><div class="client-doc-items">${clientQuoteItemRows()}</div></section>
       <section class="client-doc-total"><span class="client-doc-total-label">Valor total</span><strong class="client-doc-total-value">${total}</strong></section>
       ${conditions ? `<section class="client-doc-conditions">${conditions}</section>` : ''}
@@ -3092,6 +3351,7 @@ function switchView(viewId) {
   const labels = {
     'calculator-view': ['OFICINA / PRODUÇÃO', 'Calculadora'],
     'quotes-view': ['HISTÓRICO LOCAL', 'Orçamentos'],
+    'customers-view': ['RELACIONAMENTO', 'Clientes'],
     'materials-view': ['CATÁLOGO LOCAL', 'Materiais'],
     'help-view': ['GUIA RÁPIDO', 'Como usar'],
   };
@@ -3101,6 +3361,7 @@ function switchView(viewId) {
   if (eyebrowElement) eyebrowElement.textContent = eyebrow;
   if (titleElement) titleElement.textContent = title;
   if (viewId === 'quotes-view') renderQuotes();
+  if (viewId === 'customers-view') renderCustomers();
   if (viewId === 'materials-view') {
     renderSavedMaterials();
     renderCatalogItems();
@@ -3113,7 +3374,9 @@ function renderAll({ persistDraft = true } = {}) {
   renderPieces();
   renderSupplies();
   renderClientQuoteForm();
+  renderCustomerSelect();
   renderQuotes();
+  renderCustomers();
   renderSavedMaterials();
   renderCatalogItems();
   calculateAndRender({ persistDraft });
@@ -3357,8 +3620,14 @@ async function saveQuote() {
   }
   const name = state.quoteName.trim() || `Orçamento ${new Date().toLocaleDateString('pt-BR')}`;
   const id = state.quoteId || uid('quote');
+  const existingQuote = savedQuotes.find((item) => item.id === id);
   const snapshot = clone(state);
   snapshot.materials = snapshot.materials.map((material) => ({ ...material, widthIsDefault: false }));
+  const sameApprovedQuote = existingQuote?.status === 'approved'
+    && existingQuote.customerId === (state.clientQuote.customerId || null)
+    && num(existingQuote.salePrice) === computed.salePrice
+    && num(existingQuote.totalCost) === computed.totalCost
+    && JSON.stringify(stableCloudValue(existingQuote.snapshot)) === JSON.stringify(stableCloudValue(snapshot));
   const quote = {
     id,
     name,
@@ -3366,6 +3635,9 @@ async function saveQuote() {
     salePrice: computed.salePrice,
     totalCost: computed.totalCost,
     profit: computed.profit,
+    customerId: state.clientQuote.customerId || null,
+    status: sameApprovedQuote ? 'approved' : 'pending',
+    approvedAt: sameApprovedQuote ? existingQuote.approvedAt : null,
     updatedAt: new Date().toISOString(),
     piecesCount: state.pieces.reduce((sum, piece) => sum + Math.max(0, Math.floor(positive(piece.quantity, 1))), 0),
     materialsCount: state.materials.length,
@@ -3404,6 +3676,7 @@ async function deleteQuote(id) {
     await storeDelete('quotes', id);
     savedQuotes = savedQuotes.filter((item) => item.id !== id);
     renderQuotes();
+    renderCustomers();
     showToast('Orçamento excluído.');
   } catch (error) {
     showToast('Não foi possível excluir o orçamento.', 'error');
@@ -3429,6 +3702,7 @@ function exportBackup() {
     materials: clone(savedMaterials),
     catalogItems: clone(savedCatalogItems),
     quotes: clone(savedQuotes),
+    customers: clone(savedCustomers),
   };
   downloadFile(`grafiflow-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2));
   showToast('Backup exportado.');
@@ -3443,10 +3717,12 @@ async function importBackup(file) {
     if (Array.isArray(parsed.materials)) savedMaterials = parsed.materials.map(normalizeMaterial);
     if (Array.isArray(parsed.catalogItems)) savedCatalogItems = parsed.catalogItems.map((item) => ({ ...item, id: String(item.id).startsWith('catalog:') ? item.id : `catalog:${uid('item')}` }));
     if (Array.isArray(parsed.quotes)) savedQuotes = parsed.quotes;
+    if (Array.isArray(parsed.customers)) savedCustomers = parsed.customers;
     await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), cloudIntent: true });
     for (const material of savedMaterials) await storePut('materials', material);
     for (const item of savedCatalogItems) await storePut('materials', item);
     for (const quote of savedQuotes) await storePut('quotes', quote);
+    for (const customer of savedCustomers) await storePut('customers', customer);
     renderAll({ persistDraft: false });
     renderCatalogItems();
     showToast('Backup importado com sucesso.');
@@ -3696,6 +3972,21 @@ function handleClick(event) {
     }
     if (action === 'load-quote') loadQuote(id);
     if (action === 'delete-quote') deleteQuote(id);
+    if (action === 'toggle-quote-approval') setQuoteApproval(id);
+    if (action === 'select-customer') {
+      selectedCustomerId = id;
+      renderCustomers();
+    }
+    if (action === 'edit-customer') openCustomerForm(savedCustomers.find((customer) => customer.id === id));
+    if (action === 'delete-customer') deleteCustomer(id);
+    if (action === 'start-customer-quote') {
+      const customer = savedCustomers.find((entry) => entry.id === id);
+      if (customer) {
+        resetCurrentCalculation();
+        applyCustomerToQuoteDraft(customer);
+        switchView('calculator-view');
+      }
+    }
     if (action === 'use-saved-material') useSavedMaterial(id);
     if (action === 'edit-saved-material') editSavedMaterial(id);
     if (action === 'delete-saved-material') deleteSavedMaterial(id);
@@ -3754,6 +4045,8 @@ function handleClick(event) {
   if (id === 'install-button' || id === 'help-install-button') installApp();
   if (id === 'materials-new-button' || id === 'cancel-saved-material') resetSavedMaterialForm();
   if (id === 'cancel-catalog-item') resetCatalogItemForm();
+  if (id === 'customer-new-button') openCustomerForm();
+  if (id === 'customer-cancel-button' || id === 'customer-cancel-button-form') resetCustomerForm();
   if (id === 'optimize-button') {
     state.optimize = !state.optimize;
     toggleButton(event.target.closest('#optimize-button'), state.optimize);
@@ -3781,6 +4074,21 @@ function handlePasswordVisibilityClick(event) {
 function handleInput(event) {
   const element = event.target;
   if (!(element.matches('input, select, textarea'))) return;
+  if (element.id === 'customer-search' && event.type === 'input') {
+    renderCustomers();
+    return;
+  }
+  if (element.id === 'quote-customer-select') {
+    if (event.type !== 'change') return;
+    const customer = savedCustomers.find((entry) => entry.id === element.value);
+    if (customer) applyCustomerToQuoteDraft(customer);
+    else {
+      state.clientQuote.customerId = '';
+      renderCustomerSelect();
+      persistDraftSoon();
+    }
+    return;
+  }
   if (element.id === 'catalog-item-basis') {
     updateCatalogPricingControls();
     return;
@@ -3817,6 +4125,7 @@ function initialize() {
   document.addEventListener('change', handleInput);
   document.getElementById('saved-material-form')?.addEventListener('submit', submitSavedMaterial);
   document.getElementById('catalog-item-form')?.addEventListener('submit', submitCatalogItem);
+  document.getElementById('customer-form')?.addEventListener('submit', submitCustomer);
   document.getElementById('account-auth-form')?.addEventListener('submit', submitCloudAuth);
   document.getElementById('confirm-account-data-merge')?.addEventListener('click', confirmLocalAccountMerge);
   document.getElementById('cancel-account-data-merge')?.addEventListener('click', cancelLocalAccountMerge);
@@ -3910,7 +4219,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-session-persistence-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-customers-v1').catch(() => undefined);
 }
 
 initialize();
