@@ -1,0 +1,79 @@
+name: Mirror main to legacy GrafiFlow repository
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: grafiflow-legacy-mirror-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    if: ${{ github.repository == 'hprvisual-stack/grafiflow' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether the legacy-repository token is configured
+        id: token
+        shell: bash
+        env:
+          LEGACY_TOKEN: ${{ secrets.GRAFIFLOW_LEGACY_MIRROR_TOKEN }}
+        run: |
+          if [[ -n "$LEGACY_TOKEN" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Add the GRAFIFLOW_LEGACY_MIRROR_TOKEN Actions secret to enable repository mirroring."
+          fi
+
+      - name: Check out canonical main
+        if: ${{ steps.token.outputs.available == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Copy canonical contents to the Vercel-connected repository
+        if: ${{ steps.token.outputs.available == 'true' }}
+        shell: bash
+        env:
+          LEGACY_TOKEN: ${{ secrets.GRAFIFLOW_LEGACY_MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          askpass="${RUNNER_TEMP}/grafiflow-git-askpass.sh"
+          cat > "$askpass" <<'EOF'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *) printf '%s\n' "$LEGACY_TOKEN" ;;
+          esac
+          EOF
+          chmod 700 "$askpass"
+
+          export GIT_ASKPASS="$askpass"
+          export GIT_TERMINAL_PROMPT=0
+
+          legacy_dir="${RUNNER_TEMP}/grafiflow-legacy"
+          git clone --single-branch --branch main \
+            https://github.com/vicktordarosa07-source/grafiflow.git \
+            "$legacy_dir"
+
+          rsync -a --delete --exclude='.git/' \
+            "${GITHUB_WORKSPACE}/" "$legacy_dir/"
+
+          git -C "$legacy_dir" add --all
+          if git -C "$legacy_dir" diff --cached --quiet; then
+            echo "Legacy repository already matches canonical main."
+            exit 0
+          fi
+
+          git -C "$legacy_dir" config user.name "grafiflow-mirror[bot]"
+          git -C "$legacy_dir" config user.email "grafiflow-mirror[bot]@users.noreply.github.com"
+          git -C "$legacy_dir" commit -m "Mirror main from hprvisual-stack/grafiflow"
+          git -C "$legacy_dir" push origin HEAD:main
