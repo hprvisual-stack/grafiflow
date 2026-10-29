@@ -3647,7 +3647,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v2').catch(() => undefined);
 }
 
 initialize();
