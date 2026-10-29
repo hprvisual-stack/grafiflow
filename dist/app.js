@@ -1277,6 +1277,14 @@ function updateAccountStatus(message = '') {
   if (form) form.hidden = signedIn;
 }
 
+function updateAuthPasswordConfirmation() {
+  const password = document.getElementById('auth-password')?.value || '';
+  const confirmation = document.getElementById('auth-password-confirm');
+  if (!confirmation) return;
+  const mismatch = authMode === 'signup' && confirmation.value.length > 0 && confirmation.value !== password;
+  confirmation.setCustomValidity(mismatch ? 'As senhas não coincidem.' : '');
+}
+
 function renderAuthMode() {
   const creating = authMode === 'signup';
   const authView = authMode === 'login' || creating;
@@ -1287,6 +1295,8 @@ function renderAuthMode() {
   const nameField = document.getElementById('auth-name-field');
   const workspaceField = document.getElementById('auth-workspace-field');
   const password = document.getElementById('auth-password');
+  const passwordConfirmField = document.getElementById('auth-password-confirm-field');
+  const passwordConfirm = document.getElementById('auth-password-confirm');
   const submit = document.getElementById('auth-submit');
   const toggle = document.getElementById('auth-mode-toggle');
   const forgot = document.getElementById('auth-forgot-button');
@@ -1297,9 +1307,16 @@ function renderAuthMode() {
   if (accountView) accountView.hidden = authMode !== 'account';
   if (nameField) nameField.hidden = !creating;
   if (workspaceField) workspaceField.hidden = !creating;
+  if (passwordConfirmField) passwordConfirmField.hidden = !creating;
   if (password) password.autocomplete = creating ? 'new-password' : 'current-password';
   if (password) password.minLength = creating ? 8 : 1;
   if (password) password.required = authView;
+  if (passwordConfirm) {
+    passwordConfirm.autocomplete = creating ? 'new-password' : 'off';
+    passwordConfirm.minLength = creating ? 8 : 0;
+    passwordConfirm.required = creating;
+  }
+  updateAuthPasswordConfirmation();
   if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar no GrafiFlow';
   if (toggle) toggle.textContent = creating ? 'Já tenho uma conta' : 'Criar conta';
   if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user);
@@ -1343,13 +1360,20 @@ function openAccountModal() {
 
 async function submitCloudAuth(event) {
   event.preventDefault();
+  const email = document.getElementById('auth-email')?.value.trim();
+  const password = document.getElementById('auth-password')?.value;
+  const creating = authMode === 'signup';
+  const passwordConfirm = document.getElementById('auth-password-confirm');
+  if (creating && password !== passwordConfirm?.value) {
+    passwordConfirm?.setCustomValidity('As senhas não coincidem.');
+    passwordConfirm?.reportValidity();
+    return;
+  }
+  passwordConfirm?.setCustomValidity('');
   if (!cloudConfigured()) {
     showToast('A sincronização será ativada após configurar o projeto Supabase.', 'error');
     return;
   }
-  const email = document.getElementById('auth-email')?.value.trim();
-  const password = document.getElementById('auth-password')?.value;
-  const creating = authMode === 'signup';
   authNotice = '';
   const body = creating ? {
     email, password,
@@ -3513,6 +3537,10 @@ function handleClick(event) {
   if (id === 'auth-mode-toggle') {
     authMode = authMode === 'signup' ? 'login' : 'signup';
     authNotice = '';
+    const password = document.getElementById('auth-password');
+    const passwordConfirm = document.getElementById('auth-password-confirm');
+    if (password) password.value = '';
+    if (passwordConfirm) passwordConfirm.value = '';
     renderAuthMode();
     updateAccountStatus();
   }
@@ -3589,6 +3617,8 @@ function initialize() {
   document.getElementById('saved-material-form')?.addEventListener('submit', submitSavedMaterial);
   document.getElementById('catalog-item-form')?.addEventListener('submit', submitCatalogItem);
   document.getElementById('account-auth-form')?.addEventListener('submit', submitCloudAuth);
+  document.getElementById('auth-password')?.addEventListener('input', updateAuthPasswordConfirmation);
+  document.getElementById('auth-password-confirm')?.addEventListener('input', updateAuthPasswordConfirmation);
   document.getElementById('recovery-request-form')?.addEventListener('submit', submitPasswordRecoveryRequest);
   document.getElementById('password-recovery-form')?.addEventListener('submit', submitRecoveredPassword);
   document.getElementById('change-password-form')?.addEventListener('submit', submitPasswordChange);
@@ -3647,7 +3677,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v2').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v3').catch(() => undefined);
 }
 
 initialize();
