@@ -361,6 +361,13 @@ function saveCloudSession(session) {
   updateAccountStatus();
 }
 
+function clearRememberedSessionForFreshLogin() {
+  saveCloudSession(null);
+  cloudWorkspaceId = '';
+  cloudWorkspaceName = '';
+  try { localStorage.removeItem(CLOUD_WORKSPACE_KEY); } catch { /* armazenamento local opcional */ }
+}
+
 function catalogRecordType(category) {
   return CATALOG_RECORD_TYPES[category] || '';
 }
@@ -3609,6 +3616,7 @@ function clearPresetTextOnFocus(event) {
 }
 
 function initialize() {
+  clearRememberedSessionForFreshLogin();
   initializeCrossTabSync();
   document.addEventListener('click', handleClick);
   document.addEventListener('focusin', clearPresetTextOnFocus);
@@ -3661,14 +3669,10 @@ function initialize() {
     renderAll({ persistDraft: false });
     const handled = await handleAuthCallback();
     if (handled) return;
-    await restoreCloudAccount();
-    const authenticated = authMode !== 'recovery-complete' && Boolean(cloudSession?.access_token && cloudSession?.user?.id);
-    if (!authenticated) {
-      if (authMode !== 'recovery-complete') authMode = 'login';
-      renderAuthMode();
-      updateAccountStatus();
-    }
-    setAuthAccessUI(authenticated);
+    authMode = 'login';
+    renderAuthMode();
+    updateAccountStatus();
+    setAuthAccessUI(false);
   }).catch((error) => {
     console.error('Não foi possível preparar a tela inicial do GrafiFlow.', error);
     authMode = 'login';
@@ -3677,7 +3681,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v3').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v4').catch(() => undefined);
 }
 
 initialize();
