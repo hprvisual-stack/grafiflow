@@ -365,13 +365,6 @@ function saveCloudSession(session) {
   updateAccountStatus();
 }
 
-function clearRememberedSessionForFreshLogin() {
-  saveCloudSession(null);
-  cloudWorkspaceId = '';
-  cloudWorkspaceName = '';
-  try { localStorage.removeItem(CLOUD_WORKSPACE_KEY); } catch { /* armazenamento local opcional */ }
-}
-
 function catalogRecordType(category) {
   return CATALOG_RECORD_TYPES[category] || '';
 }
@@ -674,7 +667,7 @@ async function usableCloudSession() {
   const expiresAt = Number(cloudSession.expires_at || 0) * 1000;
   if (expiresAt && expiresAt > Date.now() + 60_000) return cloudSession;
   if (!cloudSession.refresh_token) throw new Error('Sua sessão expirou. Entre novamente para sincronizar.');
-  const refreshed = await cloudFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', token: cloudConfig().key, body: { refresh_token: cloudSession.refresh_token } });
+  const refreshed = await cloudFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', token: cloudConfig().key, body: { refresh_token: cloudSession.refresh_token }, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
   const session = { ...refreshed, expires_at: Math.floor(Date.now() / 1000) + Number(refreshed.expires_in || 3600) };
   saveCloudSession(session);
   return session;
@@ -1326,37 +1319,68 @@ function cancelLocalAccountMerge() {
   updateAccountStatus(authNotice);
 }
 
-async function restoreCloudAccount() {
+async function restoreCloudAccount({ backgroundSetup = false } = {}) {
   const saved = readCloudSession();
-  if (!saved?.access_token) return;
+  if (!saved?.access_token) return false;
   cloudWorkspaceId = (() => { try { return localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { return ''; } })();
   let localOwner = '';
   try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
   if (localOwner && saved.user?.id && localOwner !== saved.user.id) {
     cloudWorkspaceId = '';
-    authNotice = 'Os dados locais deste dispositivo pertencem a outra conta. Entre com a conta original para continuar.';
+    saveCloudSession(null);
+    authMode = 'login';
+    authNotice = 'A sessão salva não corresponde aos dados deste tablet. Entre na conta desejada para continuar.';
+    renderAuthMode();
     updateAccountStatus(authNotice);
-    return;
+    setAuthAccessUI(false);
+    return false;
   }
   saveCloudSession(saved);
   if (!cloudConfigured() || !navigator.onLine) {
     updateAccountStatus(navigator.onLine ? 'Configure o Supabase para sincronizar' : 'Conta disponível offline');
-    return;
+    return true;
   }
+  if (backgroundSetup) cloudSessionSetupRunning = true;
+  let authVerified = false;
   try {
     const session = await usableCloudSession();
-    const user = await cloudFetch('/auth/v1/user', { token: session.access_token });
+    const user = await cloudFetch('/auth/v1/user', { token: session.access_token, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
+    authVerified = true;
+    if (localOwner && user?.id && localOwner !== user.id) {
+      saveCloudSession(null);
+      cloudWorkspaceId = '';
+      authMode = 'login';
+      authNotice = 'A sessão salva não corresponde aos dados deste tablet. Entre na conta desejada para continuar.';
+      renderAuthMode();
+      updateAccountStatus(authNotice);
+      setAuthAccessUI(false);
+      return false;
+    }
     saveCloudSession({ ...session, user });
     await loadAccountProfile(user);
     if (!cloudWorkspaceId) await getWorkspaceMembership();
     await queueLocalDataForFirstSync();
+    if (backgroundSetup) cloudSessionSetupRunning = false;
     await syncCloudNow();
+    return true;
   } catch (error) {
-    if (error.status === 401) {
+    const invalidSession = error.status === 401
+      || (error.status === 400 && !authVerified)
+      || /sess[aã]o expirou|refresh.token.not.found|invalid refresh token/i.test(String(error.message || ''));
+    if (invalidSession) {
       saveCloudSession(null);
       cloudWorkspaceId = '';
+      authNotice = 'Sua sessão expirou. Entre novamente para continuar.';
+      authMode = 'login';
+      renderAuthMode();
+      updateAccountStatus(authNotice);
+      setAuthAccessUI(false);
+      return false;
     }
     updateAccountStatus(error.message || 'Sincronização indisponível');
+    return Boolean(cloudSession?.access_token);
+  } finally {
+    if (backgroundSetup) cloudSessionSetupRunning = false;
   }
 }
 
@@ -3785,7 +3809,6 @@ function clearPresetTextOnFocus(event) {
 }
 
 function initialize() {
-  clearRememberedSessionForFreshLogin();
   initializeCrossTabSync();
   document.addEventListener('click', handleClick);
   document.addEventListener('click', handlePasswordVisibilityClick);
@@ -3841,6 +3864,40 @@ function initialize() {
     renderAll({ persistDraft: false });
     const handled = await handleAuthCallback();
     if (handled) return;
+    const savedSession = readCloudSession();
+    let localOwner = '';
+    try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
+    if (savedSession?.access_token && savedSession.user?.id && (!localOwner || localOwner === savedSession.user.id)) {
+      if (!localOwner) {
+        try { localStorage.setItem(CLOUD_OWNER_KEY, savedSession.user.id); } catch { /* sessão pode continuar local até o próximo login */ }
+      }
+      cloudWorkspaceId = (() => { try { return localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { return ''; } })();
+      saveCloudSession(savedSession);
+      authMode = 'account';
+      renderAuthMode();
+      updateAccountStatus('Conta lembrada. Restaurando sua sessão…');
+      setAuthAccessUI(true);
+      void restoreCloudAccount({ backgroundSetup: true }).then((restored) => {
+        if (!restored || !cloudSession?.access_token) {
+          authMode = 'login';
+          renderAuthMode();
+          updateAccountStatus(authNotice || 'Entre novamente para continuar.');
+          setAuthAccessUI(false);
+        }
+      }).catch((error) => {
+        updateAccountStatus(error.message || 'Não foi possível restaurar a sessão.');
+      });
+      return;
+    }
+    if (savedSession?.access_token && localOwner && savedSession.user?.id && localOwner !== savedSession.user.id) {
+      saveCloudSession(null);
+      cloudWorkspaceId = '';
+      authNotice = 'A sessão salva não corresponde aos dados deste tablet. Entre na conta desejada para continuar.';
+    } else if (savedSession?.access_token) {
+      saveCloudSession(null);
+      cloudWorkspaceId = '';
+      authNotice = 'A sessão salva está incompleta. Entre novamente para continuar.';
+    }
     authMode = 'login';
     renderAuthMode();
     updateAccountStatus();
@@ -3853,7 +3910,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-account-merge-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-session-persistence-v1').catch(() => undefined);
 }
 
 initialize();
