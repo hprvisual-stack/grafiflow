@@ -7,6 +7,7 @@ const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
 const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v1';
 const MAX_ROLL_LENGTH_MM = 50000;
 const MAX_LAYOUT_PIECES_PER_MATERIAL = 1000;
+const AUTH_REQUEST_TIMEOUT_MS = 20000;
 const CATALOG_RECORD_TYPES = Object.freeze({
   finish: 'catalog_finish',
   supply: 'catalog_supply',
@@ -108,6 +109,7 @@ let deferredInstallPrompt = null;
 let cloudSession = null;
 let cloudWorkspaceId = '';
 let cloudWorkspaceName = '';
+let cloudSessionSetupRunning = false;
 let cloudIncrementalSyncAvailable = null;
 let cloudSyncCapabilityCheckedAt = 0;
 let cloudSyncTimer;
@@ -472,21 +474,33 @@ async function deleteQueuedMutation(id) {
   if (db) await idbRequest(db.transaction('syncQueue', 'readwrite').objectStore('syncQueue').delete(id));
 }
 
-async function cloudFetch(path, { method = 'GET', body, token = cloudSession?.access_token, prefer } = {}) {
+async function cloudFetch(path, { method = 'GET', body, token = cloudSession?.access_token, prefer, timeoutMs = 0 } = {}) {
   const config = cloudConfig();
   if (!config.url || !config.key) throw new Error('A conexão com o Supabase ainda não foi configurada.');
-  const response = await fetch(`${config.url}${path}`, {
-    method,
-    headers: {
-      apikey: config.key,
-      Authorization: `Bearer ${token || config.key}`,
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(prefer ? { Prefer: prefer } : {}),
-      ...(path.startsWith('/rest/v1/rpc/') ? { 'Content-Profile': 'public', 'Accept-Profile': 'public' } : {}),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const text = await response.text();
+  const controller = timeoutMs > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response;
+  let text;
+  try {
+    response = await fetch(`${config.url}${path}`, {
+      method,
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${token || config.key}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(prefer ? { Prefer: prefer } : {}),
+        ...(path.startsWith('/rest/v1/rpc/') ? { 'Content-Profile': 'public', 'Accept-Profile': 'public' } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    text = await response.text();
+  } catch (error) {
+    if (controller?.signal.aborted) throw new Error('O serviço de login demorou mais de 20 segundos para responder. Verifique a conexão do tablet e tente novamente.');
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
   let result = null;
   if (text) {
     try { result = JSON.parse(text); } catch { result = { message: text }; }
@@ -716,7 +730,7 @@ async function synchronizeAllData() {
 }
 
 function syncAfterWake() {
-  if (!cloudSession || !navigator.onLine || !cloudConfigured()) return;
+  if (!cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
   if (!cloudWorkspaceId) {
     restoreCloudAccount();
     return;
@@ -1091,7 +1105,7 @@ async function downloadIncrementalCloudChanges(session) {
 }
 
 async function syncCloudNow() {
-  if (!cloudSession || !navigator.onLine || !cloudConfigured()) return;
+  if (!cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
   if (!cloudWorkspaceId) {
     restoreCloudAccount();
     return;
@@ -1184,7 +1198,7 @@ async function syncCloudNow() {
   }
 }
 
-async function activateCloudSession(session) {
+async function activateCloudSession(session, { backgroundSync = false } = {}) {
   const nextSession = { ...session, expires_at: session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600) };
   const ownerId = nextSession.user?.id || '';
   let localOwner = '';
@@ -1202,6 +1216,25 @@ async function activateCloudSession(session) {
   }
   if (!navigator.onLine) {
     updateAccountStatus('Conta disponível offline');
+    return true;
+  }
+  if (backgroundSync) {
+    cloudSessionSetupRunning = true;
+    void (async () => {
+      try {
+        await loadAccountProfile();
+        await getWorkspaceMembership();
+        await queueLocalDataForFirstSync();
+      } catch (error) {
+        console.warn('Não foi possível preparar a sincronização da conta.', error);
+        updateAccountStatus(error.message || 'Sincronização indisponível');
+        showToast(error.message || 'A conta entrou, mas a sincronização não foi concluída.', 'error');
+        return;
+      } finally {
+        cloudSessionSetupRunning = false;
+      }
+      syncCloudNow().catch((error) => showToast(error.message || 'A conta entrou, mas a sincronização não foi concluída.', 'error'));
+    })();
     return true;
   }
   try {
@@ -1367,13 +1400,48 @@ function openAccountModal() {
 
 async function submitCloudAuth(event) {
   event.preventDefault();
-  const email = document.getElementById('auth-email')?.value.trim();
-  const password = document.getElementById('auth-password')?.value;
+  const emailField = document.getElementById('auth-email');
+  const passwordField = document.getElementById('auth-password');
+  const email = emailField?.value.trim() || '';
+  const password = passwordField?.value || '';
   const creating = authMode === 'signup';
   const passwordConfirm = document.getElementById('auth-password-confirm');
+  authNotice = '';
+  if (!email) {
+    authNotice = 'Informe seu e-mail para continuar.';
+    updateAccountStatus(authNotice);
+    emailField?.focus();
+    return;
+  }
+  if (emailField?.validity.typeMismatch) {
+    authNotice = 'Digite um endereço de e-mail válido.';
+    updateAccountStatus(authNotice);
+    emailField?.focus();
+    return;
+  }
+  if (!password) {
+    authNotice = 'Informe sua senha para continuar.';
+    updateAccountStatus(authNotice);
+    passwordField?.focus();
+    return;
+  }
+  if (creating && password.length < 8) {
+    authNotice = 'A senha precisa ter pelo menos 8 caracteres.';
+    updateAccountStatus(authNotice);
+    passwordField?.focus();
+    return;
+  }
+  if (creating && !passwordConfirm?.value) {
+    authNotice = 'Confirme sua senha para criar a conta.';
+    updateAccountStatus(authNotice);
+    passwordConfirm?.focus();
+    return;
+  }
   if (creating && password !== passwordConfirm?.value) {
-    passwordConfirm?.setCustomValidity('As senhas não coincidem.');
-    passwordConfirm?.reportValidity();
+    authNotice = 'As senhas não coincidem.';
+    passwordConfirm?.setCustomValidity(authNotice);
+    updateAccountStatus(authNotice);
+    passwordConfirm?.focus();
     return;
   }
   passwordConfirm?.setCustomValidity('');
@@ -1381,7 +1449,6 @@ async function submitCloudAuth(event) {
     showToast('A sincronização será ativada após configurar o projeto Supabase.', 'error');
     return;
   }
-  authNotice = '';
   const body = creating ? {
     email, password,
     data: {
@@ -1391,12 +1458,14 @@ async function submitCloudAuth(event) {
   } : { email, password };
   const submit = document.getElementById('auth-submit');
   if (submit) { submit.disabled = true; submit.textContent = creating ? 'Criando…' : 'Entrando…'; }
+  authNotice = creating ? 'Criando sua conta…' : 'Validando seu acesso…';
+  updateAccountStatus(authNotice);
   try {
     const response = creating
-      ? await cloudFetch('/auth/v1/signup', { method: 'POST', token: cloudConfig().key, body })
-      : await cloudFetch('/auth/v1/token?grant_type=password', { method: 'POST', token: cloudConfig().key, body });
+      ? await cloudFetch('/auth/v1/signup', { method: 'POST', token: cloudConfig().key, body, timeoutMs: AUTH_REQUEST_TIMEOUT_MS })
+      : await cloudFetch('/auth/v1/token?grant_type=password', { method: 'POST', token: cloudConfig().key, body, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
     if (response?.access_token) {
-      const activated = await activateCloudSession({ ...response, user: response.user });
+      const activated = await activateCloudSession({ ...response, user: response.user }, { backgroundSync: true });
       if (!activated) return;
       if (!cloudSession?.access_token || !cloudSession?.user?.id) throw new Error('Não foi possível validar a sessão da conta. Tente entrar novamente.');
       document.getElementById('account-auth-form')?.reset();
@@ -3696,7 +3765,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v5').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-android-login-v1').catch(() => undefined);
 }
 
 initialize();

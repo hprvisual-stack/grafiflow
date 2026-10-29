@@ -1,11 +1,11 @@
-const CACHE_NAME = 'grafiflow-static-v37';
+const CACHE_NAME = 'grafiflow-static-v38';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20261028-auth-gate-v5',
-  './app.js?v=20261028-auth-gate-v5',
-  './config.js?v=20261028-auth-gate-v5',
-  './manifest.webmanifest?v=20261028-auth-gate-v5',
+  './styles.css?v=20261029-android-login-v1',
+  './app.js?v=20261029-android-login-v1',
+  './config.js?v=20261029-android-login-v1',
+  './manifest.webmanifest?v=20261029-android-login-v1',
   './grafiflow-favicon-v3.png',
   './grafiflow-logo.jpg',
   './login-print-roll-v1.png',
