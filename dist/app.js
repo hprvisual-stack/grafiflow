@@ -1414,9 +1414,11 @@ async function submitCloudAuth(event) {
     }
   } catch (error) {
     const message = String(error.message || 'Não foi possível conectar a conta.');
-    if (/invalid login credentials|invalid credentials/i.test(message)) showToast('E-mail ou senha incorretos.', 'error');
-    else if (/email not confirmed/i.test(message)) showToast('Confirme o cadastro pelo link enviado ao e-mail antes de entrar.', 'error');
-    else showToast(message, 'error');
+    if (/invalid login credentials|invalid credentials/i.test(message)) authNotice = 'E-mail ou senha incorretos. Confira os dados e, se este for o primeiro acesso, confirme o cadastro pelo e-mail.';
+    else if (/email not confirmed/i.test(message)) authNotice = 'Seu cadastro ainda não foi confirmado. Abra o e-mail de confirmação e toque no botão para ativar a conta.';
+    else if (/failed to fetch|networkerror|load failed/i.test(message)) authNotice = 'Não foi possível conectar ao serviço de login. Verifique a internet do tablet e tente novamente.';
+    else authNotice = message;
+    showToast(authNotice, 'error');
   } finally {
     if (submit) submit.disabled = !cloudConfigured() || Boolean(cloudSession);
     renderAuthMode();
@@ -3585,6 +3587,18 @@ function handleClick(event) {
   }
 }
 
+function handlePasswordVisibilityClick(event) {
+  const button = event.target.closest('[data-password-target]');
+  if (!button) return;
+  const input = document.getElementById(button.dataset.passwordTarget);
+  if (!input) return;
+  const visible = input.type === 'password';
+  input.type = visible ? 'text' : 'password';
+  button.textContent = visible ? 'Ocultar' : 'Mostrar';
+  button.setAttribute('aria-label', `${visible ? 'Ocultar' : 'Mostrar'} senha`);
+  button.setAttribute('aria-pressed', String(visible));
+}
+
 function handleInput(event) {
   const element = event.target;
   if (!(element.matches('input, select, textarea'))) return;
@@ -3619,6 +3633,7 @@ function initialize() {
   clearRememberedSessionForFreshLogin();
   initializeCrossTabSync();
   document.addEventListener('click', handleClick);
+  document.addEventListener('click', handlePasswordVisibilityClick);
   document.addEventListener('focusin', clearPresetTextOnFocus);
   document.addEventListener('input', handleInput);
   document.addEventListener('change', handleInput);
@@ -3681,7 +3696,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v4').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261028-auth-gate-v5').catch(() => undefined);
 }
 
 initialize();

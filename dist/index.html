@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261028-auth-gate-v4" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261028-auth-gate-v5" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261028-auth-gate-v4" />
+    <link rel="stylesheet" href="./styles.css?v=20261028-auth-gate-v5" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -240,8 +240,8 @@
                 <label class="field" id="auth-name-field" hidden><span>Seu nome</span><input id="auth-full-name" type="text" autocomplete="name" placeholder="Nome profissional" /></label>
                 <label class="field" id="auth-workspace-field" hidden><span>Nome da empresa ou espaço</span><input id="auth-workspace-name" type="text" autocomplete="organization" placeholder="Ex.: Minha gráfica" /></label>
                 <label class="field"><span>E-mail</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><input id="auth-email" type="email" autocomplete="username" required placeholder="voce@empresa.com" /></div></label>
-                <label class="field"><span>Senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg><input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="Sua senha" /></div></label>
-                <label class="field" id="auth-password-confirm-field" hidden><span>Confirme sua senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="m9 15 2 2 4-4"></path></svg><input id="auth-password-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Digite a senha novamente" /></div></label>
+                <label class="field"><span>Senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg><input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="Sua senha" /><button class="password-visibility-toggle" type="button" data-password-target="auth-password" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
+                <label class="field" id="auth-password-confirm-field" hidden><span>Confirme sua senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="m9 15 2 2 4-4"></path></svg><input id="auth-password-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Digite a senha novamente" /><button class="password-visibility-toggle" type="button" data-password-target="auth-password-confirm" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
                 <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar no GrafiFlow</button>
               </form>
               <div class="account-modal-actions">
@@ -256,8 +256,8 @@
               <button class="text-button" id="auth-back-to-login" type="button">Voltar para entrar</button>
             </form>
             <form id="password-recovery-form" class="account-auth-form" hidden>
-              <label class="field"><span>Nova senha</span><input id="recovery-new-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo de 8 caracteres" /></label>
-              <label class="field"><span>Confirme a nova senha</span><input id="recovery-confirm-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Digite a nova senha novamente" /></label>
+              <label class="field"><span>Nova senha</span><div class="password-input-wrap"><input id="recovery-new-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo de 8 caracteres" /><button class="password-visibility-toggle" type="button" data-password-target="recovery-new-password" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
+              <label class="field"><span>Confirme a nova senha</span><div class="password-input-wrap"><input id="recovery-confirm-password" type="password" autocomplete="new-password" required minlength="8" placeholder="Digite a nova senha novamente" /><button class="password-visibility-toggle" type="button" data-password-target="recovery-confirm-password" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
               <button class="primary-button account-submit" id="recovery-submit" type="submit">Salvar nova senha</button>
               <button class="text-button" id="recovery-back-to-login" type="button">Voltar para entrar</button>
             </form>
@@ -297,9 +297,9 @@
             <section class="client-form-section">
               <span class="section-kicker">SEGURANÇA</span><h3>Trocar senha</h3>
               <div class="form-grid account-form-grid">
-                <label class="field"><span>Senha atual</span><input id="password-current" type="password" autocomplete="current-password" required /></label>
-                <label class="field"><span>Nova senha</span><input id="password-new" type="password" autocomplete="new-password" required minlength="8" /></label>
-                <label class="field"><span>Confirme a nova senha</span><input id="password-confirm" type="password" autocomplete="new-password" required minlength="8" /></label>
+                <label class="field"><span>Senha atual</span><div class="password-input-wrap"><input id="password-current" type="password" autocomplete="current-password" required /><button class="password-visibility-toggle" type="button" data-password-target="password-current" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
+                <label class="field"><span>Nova senha</span><div class="password-input-wrap"><input id="password-new" type="password" autocomplete="new-password" required minlength="8" /><button class="password-visibility-toggle" type="button" data-password-target="password-new" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
+                <label class="field"><span>Confirme a nova senha</span><div class="password-input-wrap"><input id="password-confirm" type="password" autocomplete="new-password" required minlength="8" /><button class="password-visibility-toggle" type="button" data-password-target="password-confirm" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
               </div>
               <button class="primary-button account-submit" id="password-change-button" type="submit">Atualizar senha</button>
             </section>
@@ -332,7 +332,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./config.js?v=20261028-auth-gate-v4"></script>
-    <script type="module" src="./app.js?v=20261028-auth-gate-v4"></script>
+    <script src="./config.js?v=20261028-auth-gate-v5"></script>
+    <script type="module" src="./app.js?v=20261028-auth-gate-v5"></script>
   </body>
 </html>

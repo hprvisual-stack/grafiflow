@@ -450,7 +450,11 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .auth-sync-note svg { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: var(--accent-deep); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .auth-input-wrap { position: relative; display: flex; align-items: center; }
 .auth-input-wrap > svg { position: absolute; left: 15px; width: 20px; height: 20px; fill: none; stroke: #6d8396; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
-.auth-input-wrap > input { width: 100%; min-height: 56px; padding-left: 48px; border-radius: 11px; background: #fbfdff; }
+.auth-input-wrap > input { width: 100%; min-height: 56px; padding-left: 48px; padding-right: 82px; border-radius: 11px; background: #fbfdff; }
+.password-input-wrap { position: relative; display: flex; align-items: center; }
+.password-input-wrap > input { width: 100%; padding-right: 82px; }
+.password-visibility-toggle { position: absolute; z-index: 1; top: 50%; right: 7px; min-width: 68px; min-height: 40px; padding: 6px 8px; transform: translateY(-50%); border: 0; border-radius: 8px; color: var(--accent-deep); background: transparent; font-size: 0.74rem; font-weight: 750; }
+.password-visibility-toggle:hover { background: rgba(10, 151, 224, 0.08); }
 .auth-gate-active { min-height: 100%; overflow: hidden; background: #fff; }
 .auth-gate-active #account-modal:not([hidden]) { position: fixed; inset: 0; z-index: 50; display: block; overflow: hidden; padding: 0; background: #fff; }
 .auth-gate-active .account-access-layout { display: grid; grid-template-columns: minmax(340px, 0.88fr) minmax(480px, 1.12fr); width: min(1560px, 100%); min-width: 0; max-width: 100%; max-height: 100dvh; min-height: 100dvh; margin: auto; overflow: hidden; background: #fff; }
