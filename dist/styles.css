@@ -432,6 +432,10 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .account-auth-form { display: grid; gap: 14px; margin-top: 20px; }
 .account-auth-form .field { min-width: 0; }
 .account-submit { width: 100%; margin-top: 3px; }
+.account-mismatch-choice { display: grid; gap: 12px; margin-top: 20px; padding: 18px; border: 1px solid #cfdeea; border-radius: 14px; background: #f6faff; }
+.account-mismatch-choice h3 { margin: 0; color: var(--ink); font-size: 1rem; }
+.account-mismatch-choice p { margin: 0; color: var(--muted); font-size: 0.83rem; line-height: 1.55; }
+#account-mismatch-choice[hidden] { display: none !important; }
 .account-modal-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 15px; }
 .account-settings-view:not([hidden]) { display: grid; gap: 16px; }
 .account-form-grid { gap: 10px; }
@@ -483,6 +487,8 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .auth-gate-active .account-modal-actions { gap: 14px; margin-top: 22px; }
 .auth-gate-active .account-modal-actions .text-button { padding: 5px 0; color: var(--accent-deep); font-size: 0.86rem; font-weight: 700; }
 .auth-gate-active .account-modal-actions .text-button:hover { color: #034b7d; text-decoration: underline; }
+.auth-gate-active .account-mismatch-choice { gap: 14px; margin-top: 0; padding: 18px; }
+.auth-gate-active #cancel-account-data-merge { min-height: 46px; border: 1px solid #cfdeea; border-radius: 11px; background: #fff; }
 .auth-gate-active #auth-mode-toggle { margin-left: auto; }
 .auth-gate-active .auth-sync-note { margin-top: 30px; padding-top: 21px; font-size: 0.79rem; }
 .auth-gate-active #close-account-modal, .auth-gate-active .account-close-actions, .auth-gate-active .account-offline-note { display: none !important; }

@@ -109,6 +109,8 @@ let deferredInstallPrompt = null;
 let cloudSession = null;
 let cloudWorkspaceId = '';
 let cloudWorkspaceName = '';
+let pendingCloudAccountSwitch = null;
+let cloudAccountSwitchRunning = false;
 let cloudSessionSetupRunning = false;
 let cloudIncrementalSyncAvailable = null;
 let cloudSyncCapabilityCheckedAt = 0;
@@ -1205,9 +1207,13 @@ async function activateCloudSession(session, { backgroundSync = false } = {}) {
   try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
   if (localOwner && ownerId && localOwner !== ownerId) {
     cloudWorkspaceId = '';
-    authNotice = 'Os dados locais deste dispositivo pertencem a outra conta. Entre com a conta original para continuar.';
+    let previousWorkspace = '';
+    try { previousWorkspace = localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { /* armazenamento local opcional */ }
+    pendingCloudAccountSwitch = { session: nextSession, previousOwner: localOwner, previousWorkspace };
+    authMode = 'login';
+    authNotice = `A conta ${nextSession.user?.email || 'informada'} foi autenticada, mas este tablet mantém dados locais vinculados a outra conta.`;
+    renderAuthMode();
     updateAccountStatus(authNotice);
-    showToast('Esta conta não corresponde aos dados locais deste dispositivo.', 'error');
     return false;
   }
   saveCloudSession(nextSession);
@@ -1250,6 +1256,76 @@ async function activateCloudSession(session, { backgroundSync = false } = {}) {
   return true;
 }
 
+async function confirmLocalAccountMerge() {
+  const pending = pendingCloudAccountSwitch;
+  if (!pending || cloudAccountSwitchRunning) return;
+  const confirmButton = document.getElementById('confirm-account-data-merge');
+  const cancelButton = document.getElementById('cancel-account-data-merge');
+  cloudAccountSwitchRunning = true;
+  if (confirmButton) { confirmButton.disabled = true; confirmButton.textContent = 'Mesclando…'; }
+  if (cancelButton) cancelButton.disabled = true;
+  authNotice = 'Vinculando os dados locais à conta nova…';
+  updateAccountStatus(authNotice);
+  let localBindingUpdated = false;
+  try {
+    const currentOwner = localStorage.getItem(CLOUD_OWNER_KEY) || '';
+    if (currentOwner !== pending.previousOwner) {
+      throw new Error('O vínculo local mudou desde o login. Feche e abra o GrafiFlow antes de tentar novamente.');
+    }
+    const newOwner = pending.session.user?.id || '';
+    if (!newOwner || newOwner === pending.previousOwner) throw new Error('Não foi possível validar o usuário da nova conta.');
+    try {
+      localStorage.removeItem(CLOUD_WORKSPACE_KEY);
+      localStorage.setItem(CLOUD_OWNER_KEY, newOwner);
+      localBindingUpdated = true;
+    } catch {
+      if (pending.previousWorkspace) localStorage.setItem(CLOUD_WORKSPACE_KEY, pending.previousWorkspace);
+      throw new Error('Não foi possível atualizar o vínculo local do tablet. Os dados continuam preservados; tente novamente.');
+    }
+    cloudWorkspaceId = '';
+    cloudWorkspaceName = '';
+    const activated = await activateCloudSession(pending.session, { backgroundSync: true });
+    if (!activated) throw new Error(authNotice || 'Não foi possível vincular esta conta.');
+    pendingCloudAccountSwitch = null;
+    authMode = 'account';
+    authNotice = '';
+    document.getElementById('account-auth-form')?.reset();
+    setAuthAccessUI(true);
+    showToast(navigator.onLine
+      ? 'Conta conectada. A mesclagem dos dados locais começou em segundo plano.'
+      : 'Conta conectada. Os dados locais serão mesclados quando houver internet.');
+  } catch (error) {
+    const newOwner = pending.session.user?.id || '';
+    if (newOwner && cloudSession?.user?.id === newOwner) saveCloudSession(null);
+    if (localBindingUpdated) {
+      try {
+        localStorage.setItem(CLOUD_OWNER_KEY, pending.previousOwner);
+        if (pending.previousWorkspace) localStorage.setItem(CLOUD_WORKSPACE_KEY, pending.previousWorkspace);
+        else localStorage.removeItem(CLOUD_WORKSPACE_KEY);
+      } catch { /* os dados permanecem locais para nova tentativa */ }
+    }
+    cloudWorkspaceId = '';
+    cloudWorkspaceName = '';
+    pendingCloudAccountSwitch = pending;
+    authNotice = error.message || 'Não foi possível iniciar a mesclagem. Os dados locais foram preservados.';
+    showToast(authNotice, 'error');
+  } finally {
+    cloudAccountSwitchRunning = false;
+    if (confirmButton) { confirmButton.disabled = false; confirmButton.textContent = 'Mesclar dados locais nesta conta'; }
+    if (cancelButton) cancelButton.disabled = false;
+    renderAuthMode();
+    updateAccountStatus();
+  }
+}
+
+function cancelLocalAccountMerge() {
+  if (!pendingCloudAccountSwitch || cloudAccountSwitchRunning) return;
+  pendingCloudAccountSwitch = null;
+  authNotice = 'Mesclagem cancelada. Os dados locais foram mantidos neste tablet.';
+  renderAuthMode();
+  updateAccountStatus(authNotice);
+}
+
 async function restoreCloudAccount() {
   const saved = readCloudSession();
   if (!saved?.access_token) return;
@@ -1289,6 +1365,7 @@ function updateAccountStatus(message = '') {
   const status = document.getElementById('account-modal-status');
   const configured = cloudConfigured();
   const signedIn = Boolean(cloudSession?.user?.email || cloudSession?.user?.id);
+  const accountSwitchPending = Boolean(pendingCloudAccountSwitch) && !signedIn;
   const authGateActive = document.body.classList.contains('auth-gate-active') || document.body.classList.contains('auth-pending');
   const manualSync = document.getElementById('manual-sync-button');
   if (manualSync) manualSync.disabled = !configured || !navigator.onLine || cloudSyncRunning || fullSyncRunning;
@@ -1310,11 +1387,19 @@ function updateAccountStatus(message = '') {
     syncNow.disabled = !navigator.onLine || cloudSyncRunning || fullSyncRunning || !cloudWorkspaceId;
   }
   const submit = document.getElementById('auth-submit');
-  if (submit) submit.disabled = signedIn || !configured;
+  if (submit) submit.disabled = signedIn || accountSwitchPending || !configured;
   const toggle = document.getElementById('auth-mode-toggle');
-  if (toggle) toggle.hidden = signedIn;
+  if (toggle) toggle.hidden = signedIn || accountSwitchPending;
+  const forgot = document.getElementById('auth-forgot-button');
+  if (forgot) forgot.hidden = signedIn || accountSwitchPending;
   const form = document.getElementById('account-auth-form');
-  if (form) form.hidden = signedIn;
+  if (form) form.hidden = signedIn || accountSwitchPending;
+  const switchChoice = document.getElementById('account-mismatch-choice');
+  if (switchChoice) switchChoice.hidden = !accountSwitchPending;
+  const modalActions = document.getElementById('account-modal-actions');
+  if (modalActions) modalActions.hidden = signedIn || accountSwitchPending;
+  const syncNote = document.querySelector('.auth-sync-note');
+  if (syncNote) syncNote.hidden = accountSwitchPending;
 }
 
 function updateAuthPasswordConfirmation() {
@@ -1359,8 +1444,9 @@ function renderAuthMode() {
   updateAuthPasswordConfirmation();
   if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar no GrafiFlow';
   if (toggle) toggle.textContent = creating ? 'Já tenho uma conta' : 'Criar conta';
-  if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user);
-  if (forgot) forgot.hidden = authMode !== 'login' || Boolean(cloudSession?.user);
+  const accountSwitchPending = Boolean(pendingCloudAccountSwitch) && !cloudSession?.user;
+  if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user) || accountSwitchPending;
+  if (forgot) forgot.hidden = authMode !== 'login' || Boolean(cloudSession?.user) || accountSwitchPending;
   if (title) {
     const titles = {
       login: 'Acesse o GrafiFlow',
@@ -3709,6 +3795,8 @@ function initialize() {
   document.getElementById('saved-material-form')?.addEventListener('submit', submitSavedMaterial);
   document.getElementById('catalog-item-form')?.addEventListener('submit', submitCatalogItem);
   document.getElementById('account-auth-form')?.addEventListener('submit', submitCloudAuth);
+  document.getElementById('confirm-account-data-merge')?.addEventListener('click', confirmLocalAccountMerge);
+  document.getElementById('cancel-account-data-merge')?.addEventListener('click', cancelLocalAccountMerge);
   document.getElementById('auth-password')?.addEventListener('input', updateAuthPasswordConfirmation);
   document.getElementById('auth-password-confirm')?.addEventListener('input', updateAuthPasswordConfirmation);
   document.getElementById('recovery-request-form')?.addEventListener('submit', submitPasswordRecoveryRequest);
@@ -3765,7 +3853,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-android-login-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-account-merge-v1').catch(() => undefined);
 }
 
 initialize();

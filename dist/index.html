@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261029-android-login-v1" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261029-account-merge-v1" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261029-android-login-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20261029-account-merge-v1" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -244,7 +244,13 @@
                 <label class="field" id="auth-password-confirm-field" hidden><span>Confirme sua senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="m9 15 2 2 4-4"></path></svg><input id="auth-password-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Digite a senha novamente" /><button class="password-visibility-toggle" type="button" data-password-target="auth-password-confirm" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
                 <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar no GrafiFlow</button>
               </form>
-              <div class="account-modal-actions">
+              <section id="account-mismatch-choice" class="account-mismatch-choice" aria-labelledby="account-mismatch-title" hidden>
+                <h3 id="account-mismatch-title">Mesclar dados deste tablet?</h3>
+                <p>Esta conta foi autenticada, mas os dados locais do tablet estão vinculados a outro usuário. Ao continuar, o GrafiFlow enviará o orçamento atual, materiais e catálogo, orçamentos salvos e alterações pendentes para esta conta. Registros diferentes que já existam na nuvem serão mantidos; conflitos serão guardados como cópias. A conta antiga na nuvem não será alterada.</p>
+                <button class="primary-button account-submit" id="confirm-account-data-merge" type="button">Mesclar dados locais nesta conta</button>
+                <button class="text-button" id="cancel-account-data-merge" type="button">Cancelar e manter os dados neste tablet</button>
+              </section>
+              <div class="account-modal-actions" id="account-modal-actions">
                 <button class="text-button" id="auth-forgot-button" type="button">Esqueci minha senha</button>
                 <button class="text-button" id="auth-mode-toggle" type="button">Criar conta</button>
               </div>
@@ -332,7 +338,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./config.js?v=20261029-android-login-v1"></script>
-    <script type="module" src="./app.js?v=20261029-android-login-v1"></script>
+    <script src="./config.js?v=20261029-account-merge-v1"></script>
+    <script type="module" src="./app.js?v=20261029-account-merge-v1"></script>
   </body>
 </html>
