@@ -40,9 +40,19 @@ Os dados locais do site antigo pertencem à origem antiga do navegador. Exporte 
 
 ## Assinatura Asaas
 
-O GrafiFlow inclui checkout recorrente hospedado pelo Asaas, para cartão de crédito, com 15 dias grátis, três cobranças mensais de R$ 40 e R$ 50 por mês a partir da quarta. O teste começa quando o Asaas cria a assinatura e a primeira cobrança vence 15 dias após a criação do checkout. A quarta mensalidade é atualizada pelo webhook depois da confirmação da terceira cobrança. Eventos são autenticados com token separado da chave de API e processados de forma idempotente.
+O fluxo novo oferece teste grátis iniciado pelo usuário por 15 dias, plano mensal de R$ 35 nos três primeiros ciclos pagos e R$ 50 a partir do quarto, e plano anual de R$ 450 em uma única cobrança à vista. O anual usa checkout `DETACHED`, sem cobrança recorrente ou parcelamento. O acesso vem do banco; abrir ou voltar do checkout não confirma pagamento.
 
-A integração fica desligada por padrão (`GRAFIFLOW_BILLING_ENABLED=false`). Para preparar o banco, aplique `supabase/migrations/20261031021444_asaas_billing.sql` depois das migrações base listadas acima. Ela estende a tabela de assinaturas e cria tabelas internas protegidas por RLS para registrar cobranças, IDs de assinatura do Asaas e eventos recebidos. A interface mostra o estado da assinatura; ela ainda não bloqueia o uso do app por inadimplência e não oferece cancelamento ou troca de cartão dentro do GrafiFlow. Confirme com o Asaas que a tokenização está habilitada na conta: a atualização do valor de uma assinatura de cartão depende desse recurso.
+Depois das cinco migrações base, aplique primeiro `supabase/migrations/20261031021444_asaas_billing.sql` se ela ainda não estiver no banco e, em seguida, `supabase/migrations/20261031120000_grafiflow_subscriptions_entitlements.sql`. A segunda migração preserva os espaços já existentes como acesso garantido, cria o histórico de períodos financeiros, implementa início único do teste, carência, leitura do status e bloqueio dos registros sincronizados por RLS/RPC. Ela começa com o enforcement do banco **desligado** em `private.grafiflow_billing_settings`, para que a homologação no projeto Supabase compartilhado com a produção não bloqueie contas novas na versão de produção.
+
+Como o preview Vercel e a produção usam o mesmo projeto Supabase, não ative `enforcement_enabled` durante a homologação nesse banco compartilhado. A tela de cobrança do preview pode ser validada com usuários de teste, mas a proteção de gravações no banco só deve ser ativada numa base de homologação isolada ou junto com a ativação coordenada da cobrança na produção. Após homologar e alinhar a versão da aplicação, a ativação é feita pelo SQL Editor do Supabase:
+
+```sql
+update private.grafiflow_billing_settings
+set enforcement_enabled = true, updated_at = now()
+where singleton = true;
+```
+
+Configure `GRAFIFLOW_BILLING_ENABLED=true` e `ASAAS_ENVIRONMENT=sandbox` apenas no ambiente Preview da branch de homologação. Mantenha a variável de produção `GRAFIFLOW_BILLING_ENABLED=false` até a ativação coordenada do banco e do app. Para produção, use credenciais Asaas de produção e valide o procedimento com uma conta de teste antes de liberar aos clientes.
 
 Configure estas variáveis privadas no projeto Vercel:
 
@@ -54,9 +64,9 @@ Configure estas variáveis privadas no projeto Vercel:
 - `GRAFIFLOW_APP_URL`: endereço HTTPS do GrafiFlow, por padrão `https://grafiflow.vercel.app`.
 - `GRAFIFLOW_ALLOWED_ORIGINS`: opcional, origens HTTPS adicionais separadas por vírgula.
 
-No painel Asaas do mesmo ambiente, cadastre o webhook `https://grafiflow.vercel.app/api/asaas/webhook`, use o mesmo `ASAAS_WEBHOOK_AUTH_TOKEN`, habilite entrega sequencial e selecione `CHECKOUT_CREATED`, `CHECKOUT_PAID`, `CHECKOUT_CANCELED`, `CHECKOUT_EXPIRED`, `SUBSCRIPTION_CREATED`, `SUBSCRIPTION_UPDATED`, `SUBSCRIPTION_INACTIVATED`, `SUBSCRIPTION_DELETED`, `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`, `PAYMENT_OVERDUE`, `PAYMENT_REFUNDED`, `PAYMENT_PARTIALLY_REFUNDED`, `PAYMENT_RECEIVED_IN_CASH_UNDONE`, `PAYMENT_CHARGEBACK_REQUESTED` e `PAYMENT_CHARGEBACK_DISPUTE`. O endpoint responde HTTP 200 depois de gravar o evento e concluir eventual troca de preço. Acompanhe os logs do webhook no painel Asaas: se a atualização de valor falhar, a integração responde erro para o Asaas reenviar o evento.
+No painel Asaas do mesmo ambiente, cadastre o webhook no endereço correspondente ao deployment que está sendo homologado, use o mesmo `ASAAS_WEBHOOK_AUTH_TOKEN`, habilite entrega sequencial e selecione `CHECKOUT_CREATED`, `CHECKOUT_PAID`, `CHECKOUT_CANCELED`, `CHECKOUT_EXPIRED`, `SUBSCRIPTION_CREATED`, `SUBSCRIPTION_UPDATED`, `SUBSCRIPTION_INACTIVATED`, `SUBSCRIPTION_DELETED`, `PAYMENT_CREATED`, `PAYMENT_UPDATED`, `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`, `PAYMENT_OVERDUE`, `PAYMENT_REFUNDED`, `PAYMENT_PARTIALLY_REFUNDED`, `PAYMENT_RECEIVED_IN_CASH_UNDONE`, `PAYMENT_CHARGEBACK_REQUESTED` e `PAYMENT_CHARGEBACK_DISPUTE`. `PAYMENT_CREATED` registra a cobrança recorrente existente e o link para antecipá-la; `PAYMENT_UPDATED` mantém o valor local alinhado quando o Asaas atualiza cobranças futuras na mudança para R$ 50. A aplicação não cria uma segunda cobrança para o mesmo ciclo. Eventos são idempotentes pelo identificador fornecido pelo Asaas. Se a atualização automática de R$ 35 para R$ 50 falhar, o endpoint responde erro para o Asaas reenviar o evento.
 
-Valide o fluxo completo no Sandbox antes de ativar `production`: criar uma conta de teste, iniciar o checkout, confirmar a assinatura, receber eventos de pagamento e verificar o registro em `workspace_subscriptions`. O retorno visual do checkout não confirma pagamento; o estado só muda por webhook. Checkout recorrente neste fluxo aceita cartão; Pix e boleto recorrentes não estão incluídos.
+Valide o fluxo completo no Sandbox antes de ativar `production`: use um usuário de teste novo, inicie o trial, teste os dois checkouts, confirme pagamentos via webhook, confira períodos e histórico e valide o bloqueio e a carência. Não use a conta principal para simular trial, porque o teste é único por espaço. O retorno visual do checkout não confirma pagamento. A alteração automática de preço de cartão mensal depende de a tokenização estar habilitada na conta Asaas de produção; confirme isso com o Asaas antes de ativar a cobrança real. O mensal aceita cartão recorrente; o anual é cartão em pagamento único; Pix e boleto não estão incluídos.
 
 ## Desenvolvimento local
 

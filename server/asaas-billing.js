@@ -1,8 +1,7 @@
 const BRAZIL_TIME_ZONE = 'America/Sao_Paulo';
 const CHECKOUT_MINUTES_TO_EXPIRE = 60;
-const TRIAL_DAYS = 15;
-const PROMO_PRICE_CENTS = 4000;
-const STANDARD_PRICE_CENTS = 5000;
+export { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_CYCLES, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS, monthlyPriceCents, addCalendarMonths, deriveEntitlement, countdownLabel, buildAsaasCheckoutPayload, expectedPlanPriceCents } from './billing-domain.js';
+import { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS } from './billing-domain.js';
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -210,6 +209,7 @@ export async function callAsaas(path, { config, method = 'GET', body } = {}) {
   if (!response.ok) {
     console.error('Erro do Asaas.', response.status, JSON.stringify(data).slice(0, 400));
     const error = new HttpError(502, 'O Asaas não aceitou a operação. Verifique o ambiente e as credenciais configurados.');
+    error.asaasStatus = response.status;
     error.asaasDefinitive = response.status >= 400 && response.status < 500;
     throw error;
   }
@@ -217,5 +217,12 @@ export async function callAsaas(path, { config, method = 'GET', body } = {}) {
 }
 
 export function checkoutConstants() {
-  return { checkoutMinutesToExpire: CHECKOUT_MINUTES_TO_EXPIRE, trialDays: TRIAL_DAYS, promoPriceCents: PROMO_PRICE_CENTS, standardPriceCents: STANDARD_PRICE_CENTS };
+  return {
+    checkoutMinutesToExpire: CHECKOUT_MINUTES_TO_EXPIRE,
+    trialDays: TRIAL_DAYS,
+    graceDays: GRACE_DAYS,
+    promoPriceCents: MONTHLY_PROMO_PRICE_CENTS,
+    standardPriceCents: MONTHLY_STANDARD_PRICE_CENTS,
+    annualPriceCents: ANNUAL_PRICE_CENTS,
+  };
 }

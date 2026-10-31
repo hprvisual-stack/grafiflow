@@ -5,6 +5,7 @@ const CLOUD_SESSION_KEY = 'grafiflow.auth.v1';
 const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
 const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v1';
+const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
 const MAX_ROLL_LENGTH_MM = 50000;
 const MAX_LAYOUT_PIECES_PER_MATERIAL = 1000;
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
@@ -115,6 +116,13 @@ let deferredInstallPrompt = null;
 let cloudSession = null;
 let cloudWorkspaceId = '';
 let cloudWorkspaceName = '';
+let billingEntitlement = null;
+let billingHistory = [];
+let billingRefreshPromise = null;
+let billingCountdownTimer = null;
+let billingRefreshTimer = null;
+let billingDeadlineTimer = null;
+let billingClockAnchor = null;
 let pendingCloudAccountSwitch = null;
 let cloudAccountSwitchRunning = false;
 let cloudSessionSetupRunning = false;
@@ -673,6 +681,206 @@ function isBillingEnabled() {
   return Boolean(window.GRAFIFLOW_CONFIG?.billingEnabled);
 }
 
+function billingCacheKey() {
+  return `${BILLING_CACHE_KEY}:${cloudWorkspaceId || cloudSession?.user?.id || 'unknown'}`;
+}
+
+function readCachedBillingEntitlement() {
+  try {
+    const value = JSON.parse(localStorage.getItem(billingCacheKey()) || 'null');
+    if (!value || typeof value !== 'object') return null;
+    const elapsed = Math.max(0, Date.now() - Number(value.client_cached_at || Date.now()));
+    if (value.server_now) value.server_now = new Date(new Date(value.server_now).getTime() + elapsed).toISOString();
+    return value;
+  } catch { return null; }
+}
+
+function formatBillingDate(value, withTime = false) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    ...(withTime ? { timeStyle: 'short' } : {}),
+    timeZone: 'America/Sao_Paulo',
+  }).format(date);
+}
+
+function formatBillingMoney(cents) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(cents || 0) / 100);
+}
+
+function billingServerNowMs() {
+  if (billingClockAnchor && Number.isFinite(billingClockAnchor.serverNowMs)) {
+    return billingClockAnchor.serverNowMs + (performance.now() - billingClockAnchor.performanceNow);
+  }
+  return Date.now();
+}
+
+function billingCountdownText(deadline, prefix) {
+  const end = new Date(deadline).getTime();
+  const remaining = end - billingServerNowMs();
+  if (!Number.isFinite(end) || remaining <= 0) return '';
+  const totalMinutes = Math.ceil(remaining / 60_000);
+  const days = Math.ceil(remaining / 86_400_000);
+  if (remaining <= 86_400_000) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${prefix} ${hours}h ${String(minutes).padStart(2, '0')}min`;
+  }
+  return `${prefix} ${days} ${days === 1 ? 'dia' : 'dias'}`;
+}
+
+function renderBillingCountdown() {
+  const element = document.getElementById('billing-countdown');
+  if (!element || !isBillingEnabled() || !billingEntitlement) {
+    if (element) element.hidden = true;
+    return;
+  }
+  const state = billingEntitlement.state;
+  let label = '';
+  let tone = '';
+  if (state === 'trial_active' && billingEntitlement.trial_ends_at) {
+    label = billingCountdownText(billingEntitlement.trial_ends_at, 'Teste grátis termina em');
+    const remaining = new Date(billingEntitlement.trial_ends_at).getTime() - billingServerNowMs();
+    if (remaining <= 86_400_000) tone = 'danger';
+    else if (remaining <= 3 * 86_400_000) tone = 'warning';
+  } else if (state === 'grace_active' && billingEntitlement.grace_period_ends_at) {
+    label = billingCountdownText(billingEntitlement.grace_period_ends_at, 'Carência termina em');
+    const remaining = new Date(billingEntitlement.grace_period_ends_at).getTime() - billingServerNowMs();
+    tone = remaining <= 86_400_000 ? 'danger' : 'warning';
+  } else if (state === 'subscription_active' && billingEntitlement.next_billing_at) {
+    const due = new Date(billingEntitlement.next_billing_at).getTime();
+    const remaining = due - billingServerNowMs();
+    if (remaining > 0 && remaining <= 5 * 86_400_000) {
+      label = billingCountdownText(billingEntitlement.next_billing_at, 'Assinatura vence em');
+      tone = 'warning';
+    }
+  }
+  element.hidden = !label;
+  element.textContent = label;
+  if (tone) element.dataset.tone = tone;
+  else delete element.dataset.tone;
+  if (!label && ['trial_active', 'grace_active'].includes(state) && navigator.onLine) {
+    void refreshWorkspaceEntitlement().catch(() => undefined);
+  }
+}
+
+function renderBillingHistory(periods = billingHistory) {
+  const container = document.getElementById('billing-history-list');
+  if (!container) return;
+  container.replaceChildren();
+  const rows = Array.isArray(periods) ? periods : [];
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'billing-history-empty';
+    empty.textContent = 'Nenhum pagamento registrado.';
+    container.append(empty);
+    return;
+  }
+  for (const period of rows) {
+    const row = document.createElement('div');
+    row.className = 'billing-history-row';
+    const title = document.createElement('strong');
+    const planName = period.plan_type === 'annual' ? 'Plano anual' : 'Plano mensal';
+    const cycle = period.plan_type === 'monthly' && period.cycle_number ? ` · ${period.cycle_number}º ciclo` : '';
+    title.textContent = `${planName}${cycle}`;
+    const detail = document.createElement('span');
+    const statusLabels = { paid: 'Pago', pending: 'Aguardando pagamento', refunded: 'Estornado', voided: 'Cancelado', review: 'Em análise' };
+    const periodText = period.period_start && period.period_end
+      ? `${formatBillingDate(period.period_start)} a ${formatBillingDate(period.period_end)}`
+      : period.due_at ? `Vencimento ${formatBillingDate(period.due_at)}` : 'Período aguardando confirmação';
+    detail.textContent = `${statusLabels[period.status] || 'Registrado'} · ${periodText}${period.is_advance_payment ? ' · antecipado' : ''}`;
+    const amount = document.createElement('span');
+    amount.className = 'billing-history-amount';
+    amount.textContent = formatBillingMoney(period.amount_cents);
+    row.append(title, detail, amount);
+    container.append(row);
+  }
+}
+
+function applyBillingEntitlement(entitlement, periods = billingHistory) {
+  if (!entitlement || typeof entitlement !== 'object') return;
+  billingEntitlement = entitlement;
+  billingHistory = Array.isArray(periods) ? periods : [];
+  const serverNow = new Date(entitlement.server_now || Date.now()).getTime();
+  billingClockAnchor = {
+    serverNowMs: Number.isFinite(serverNow) ? serverNow : Date.now(),
+    performanceNow: performance.now(),
+  };
+  try { localStorage.setItem(billingCacheKey(), JSON.stringify({ ...entitlement, client_cached_at: Date.now() })); } catch { /* cache local é opcional */ }
+
+  const body = document.body;
+  const appShell = document.querySelector('.app-shell');
+  const gate = document.getElementById('billing-gate');
+  const accessAllowed = entitlement.access_allowed === true;
+  body.classList.remove('billing-verifying');
+  body.classList.toggle('billing-locked', isBillingEnabled() && !accessAllowed);
+  if (appShell) appShell.inert = isBillingEnabled() && !accessAllowed;
+  if (gate) gate.hidden = !isBillingEnabled() || accessAllowed;
+
+  const title = document.getElementById('billing-gate-title');
+  const copy = document.getElementById('billing-gate-copy');
+  const status = document.getElementById('billing-gate-status');
+  const trialButton = document.getElementById('billing-start-trial-button');
+  const trialNote = document.getElementById('billing-trial-note');
+  const startTrialAvailable = entitlement.state === 'trial_not_started' && !entitlement.trial_used && !entitlement.legacy_access;
+  if (title) {
+    const titles = {
+      trial_not_started: 'Experimente gratuitamente por 15 dias',
+      trial_expired: 'Seu teste gratuito terminou',
+      subscription_expired: 'Sua assinatura foi suspensa',
+      payment_pending: 'Aguardando confirmação do pagamento',
+    };
+    title.textContent = titles[entitlement.state] || 'Escolha um plano para continuar';
+  }
+  if (copy) {
+    const descriptions = {
+      trial_not_started: 'Aproveite todas as funcionalidades do sistema gratuitamente durante 15 dias. Explore os recursos antes de decidir assinar.',
+      trial_expired: 'Seu período gratuito de 15 dias chegou ao fim. Escolha um plano para continuar utilizando o sistema.',
+      subscription_expired: 'O período de carência de 10 dias terminou. Regularize sua assinatura para continuar utilizando o sistema.',
+      payment_pending: 'O Asaas ainda não confirmou o pagamento. O acesso será liberado assim que a confirmação chegar.',
+    };
+    copy.textContent = descriptions[entitlement.state] || 'Escolha uma forma de assinatura para retomar o acesso aos recursos do GrafiFlow.';
+  }
+  if (status) {
+    const isVerifying = body.classList.contains('billing-verifying');
+    const messages = {
+      trial_expired: 'O teste grátis não recebe período de carência.',
+      subscription_expired: 'Seus dados continuam preservados enquanto o acesso estiver suspenso.',
+      payment_pending: 'Não faça outra cobrança enquanto esta confirmação estiver em andamento.',
+    };
+    status.textContent = isVerifying ? 'Consultando o status da sua assinatura…' : (messages[entitlement.state] || '');
+    status.hidden = !status.textContent;
+  }
+  if (trialButton) trialButton.hidden = !startTrialAvailable;
+  if (trialNote) trialNote.hidden = !startTrialAvailable;
+  renderWorkspaceBilling(entitlement, billingHistory);
+  renderBillingCountdown();
+  if (billingCountdownTimer) clearInterval(billingCountdownTimer);
+  if (billingDeadlineTimer) clearTimeout(billingDeadlineTimer);
+  if (isBillingEnabled()) billingCountdownTimer = setInterval(renderBillingCountdown, 30_000);
+  const deadline = entitlement.state === 'trial_active'
+    ? entitlement.trial_ends_at
+    : ['subscription_active', 'grace_active'].includes(entitlement.state) ? entitlement.grace_period_ends_at : null;
+  const deadlineMs = deadline ? new Date(deadline).getTime() - billingServerNowMs() : 0;
+  if (isBillingEnabled() && deadlineMs > 0) {
+    const enforceBillingDeadline = () => {
+      const remaining = new Date(deadline).getTime() - billingServerNowMs();
+      if (remaining > 0) {
+        billingDeadlineTimer = setTimeout(enforceBillingDeadline, Math.min(remaining, 2_147_000_000));
+        return;
+      }
+      const expired = billingEntitlement?.state === 'trial_active'
+        ? { ...billingEntitlement, state: 'trial_expired', access_allowed: false }
+        : { ...billingEntitlement, state: 'subscription_expired', access_allowed: false };
+      applyBillingEntitlement(expired, billingHistory);
+      if (navigator.onLine) void refreshWorkspaceEntitlement();
+    };
+    billingDeadlineTimer = setTimeout(enforceBillingDeadline, Math.min(deadlineMs, 2_147_000_000));
+  }
+}
+
 function billingReturnNotice() {
   const state = new URLSearchParams(window.location.search).get('asaas');
   if (state === 'success') return 'Checkout concluído. A assinatura será atualizada após a confirmação do Asaas.';
@@ -689,134 +897,205 @@ function setBillingFeedback(message = '', error = false) {
   feedback.textContent = message;
 }
 
-function renderWorkspaceBilling(subscription = null) {
+function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
   const panel = document.getElementById('billing-panel');
   const badge = document.getElementById('billing-status-badge');
   const description = document.getElementById('billing-description');
   const button = document.getElementById('billing-checkout-button');
-  if (!panel || !badge || !description || !button) return;
+  const annualButton = document.getElementById('billing-annual-checkout-button');
+  if (!panel || !badge || !description || !button || !annualButton) return;
 
   panel.hidden = !isBillingEnabled();
   if (panel.hidden) return;
 
-  const status = subscription?.status || 'none';
-  const paidCycles = Number(subscription?.paid_cycle_count || 0);
-  const trialEndsAt = subscription?.trial_ends_at ? new Date(subscription.trial_ends_at) : null;
-  const trialEnd = trialEndsAt && !Number.isNaN(trialEndsAt.getTime())
-    ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeZone: 'America/Sao_Paulo' }).format(trialEndsAt)
-    : '';
+  const state = subscription?.state || 'trial_not_started';
+  const paidCycles = Number(subscription?.paid_monthly_cycles || 0);
   const statusLabels = {
-    none: 'Não iniciada',
-    pending: 'Em processamento',
-    trialing: 'Período grátis',
-    active: 'Ativa',
-    past_due: 'Pagamento pendente',
-    canceled: 'Cancelada',
-    incomplete: 'Não concluída',
+    legacy_access: 'Acesso garantido',
+    trial_not_started: 'Teste não iniciado',
+    trial_active: 'Teste grátis ativo',
+    trial_expired: 'Teste encerrado',
+    subscription_active: 'Assinatura ativa',
+    grace_active: 'Período de carência',
+    subscription_expired: 'Acesso suspenso',
+    payment_pending: 'Pagamento em análise',
   };
-  badge.textContent = statusLabels[status] || 'Indisponível';
-  badge.dataset.status = status;
+  badge.textContent = statusLabels[state] || 'Indisponível';
+  badge.dataset.status = state;
 
-  if (status === 'trialing') {
-    description.textContent = trialEnd
-      ? `Seu período grátis vai até ${trialEnd}. Depois, serão R$ 40 por mês nas três primeiras cobranças.`
-      : 'Seu período grátis está ativo. Depois, serão R$ 40 por mês nas três primeiras cobranças.';
-  } else if (status === 'active' && subscription?.billing_phase === 'standard') {
-    description.textContent = 'Assinatura ativa por R$ 50 por mês.';
-  } else if (status === 'active') {
-    description.textContent = `Assinatura ativa. ${Math.min(paidCycles, 3)} de 3 cobranças promocionais de R$ 40 confirmadas; depois, R$ 50 por mês.`;
-  } else if (status === 'past_due') {
-    description.textContent = 'Há um pagamento pendente no Asaas. Não crie outra assinatura; regularize a cobrança pendente para evitar interrupção.';
-  } else if (status === 'pending' && (subscription?.checkout_completed_at || subscription?.provider_subscription_id)) {
-    description.textContent = 'Checkout concluído. Aguardando o Asaas confirmar e registrar a assinatura.';
-  } else if (status === 'pending' && subscription?.provider_checkout_id) {
-    description.textContent = 'Há um checkout em aberto. Você pode continuar de onde parou.';
-  } else if (status === 'incomplete') {
-    description.textContent = 'O checkout anterior foi cancelado ou expirou. Você pode iniciar outro quando quiser.';
-  } else if (status === 'canceled') {
-    description.textContent = 'A assinatura está cancelada. Você pode contratar novamente; o período grátis não se repete.';
-  } else {
-    description.textContent = 'Inicie sua assinatura com 15 dias grátis e cobrança recorrente segura pelo Asaas.';
+  const descriptions = {
+    legacy_access: 'Este espaço já existia antes da ativação da cobrança e mantém seu acesso e seus dados preservados.',
+    trial_not_started: 'Seu teste começa quando você escolher “Inicie seu teste grátis de 15 dias”. A contratação de um plano também está disponível.',
+    trial_active: `Teste gratuito ativo até ${formatBillingDate(subscription?.trial_ends_at, true)}. Depois, o acesso depende de uma assinatura confirmada.`,
+    trial_expired: 'O teste gratuito terminou. Para continuar usando o GrafiFlow, escolha um dos planos abaixo.',
+    subscription_active: subscription?.pending_plan_type
+      ? `Período pago ativo até ${formatBillingDate(subscription.current_period_end, true)}. A mudança para o plano ${subscription.pending_plan_type === 'annual' ? 'anual' : 'mensal'} está programada para o próximo ciclo.`
+      : subscription?.plan_type === 'annual'
+        ? `Plano anual ativo até ${formatBillingDate(subscription.current_period_end, true)}. A próxima renovação custa R$ 450,00 à vista.`
+        : `Assinatura ativa. ${paidCycles < 3 ? `${Math.min(paidCycles, 3)} de 3 ciclos promocionais pagos; próxima mensalidade ${formatBillingMoney(3500)}.` : 'As próximas mensalidades são de R$ 50,00.'}`,
+    grace_active: `Sua assinatura está na carência. Regularize até ${formatBillingDate(subscription?.grace_period_ends_at, true)} para manter o acesso sem interrupção.`,
+    subscription_expired: 'O período de carência terminou. Regularize sua assinatura para reativar o acesso; seus dados foram preservados.',
+    payment_pending: 'Aguardando o Asaas confirmar um pagamento. O retorno do checkout, sozinho, não libera o sistema.',
+  };
+  description.textContent = descriptions[state] || 'Consulte os planos disponíveis para sua conta.';
+
+  const planNames = { monthly: 'Mensal', annual: 'Anual', legacy: 'Acesso garantido' };
+  const currentPlan = document.getElementById('billing-current-plan');
+  const periodLabel = document.getElementById('billing-period-label');
+  const dueLabel = document.getElementById('billing-due-label');
+  const lastPaymentLabel = document.getElementById('billing-last-payment-label');
+  if (currentPlan) currentPlan.textContent = planNames[subscription?.plan_type] || (state === 'trial_active' ? 'Teste grátis' : '—');
+  if (periodLabel) periodLabel.textContent = subscription?.current_period_start && subscription?.current_period_end
+    ? `${formatBillingDate(subscription.current_period_start)} — ${formatBillingDate(subscription.current_period_end)}`
+    : subscription?.trial_started_at && subscription?.trial_ends_at
+      ? `${formatBillingDate(subscription.trial_started_at)} — ${formatBillingDate(subscription.trial_ends_at)}` : '—';
+  if (dueLabel) dueLabel.textContent = formatBillingDate(subscription?.next_billing_at || subscription?.current_period_end);
+  if (lastPaymentLabel) lastPaymentLabel.textContent = formatBillingDate(subscription?.last_payment_at, true);
+
+  button.disabled = !navigator.onLine || !cloudSession?.access_token || Boolean(button.dataset.pending);
+  button.hidden = Boolean(subscription?.legacy_access);
+  button.textContent = subscription?.plan_type === 'annual' && subscription?.access_allowed
+    ? 'Mudar para mensal no próximo ciclo'
+    : subscription?.provider_subscription_id && subscription?.plan_type === 'monthly'
+      ? 'Pagar próxima mensalidade'
+      : 'Assinar plano mensal';
+  annualButton.disabled = !navigator.onLine || !cloudSession?.access_token || Boolean(annualButton.dataset.pending);
+  annualButton.hidden = Boolean(subscription?.legacy_access);
+  annualButton.textContent = subscription?.plan_type === 'annual' && subscription?.access_allowed
+    ? 'Renovar plano anual'
+    : subscription?.plan_type === 'monthly' && subscription?.access_allowed
+      ? 'Mudar para anual no próximo ciclo'
+      : 'Assinar plano anual';
+  const advanceBox = document.getElementById('billing-advance-box');
+  const advanceTitle = document.getElementById('billing-advance-title');
+  const advanceCopy = document.getElementById('billing-advance-copy');
+  const advanceButton = document.getElementById('billing-advance-button');
+  const paymentUrl = String(subscription?.next_payment_url || '');
+  let safePaymentUrl = '';
+  try {
+    const parsed = new URL(paymentUrl);
+    if (parsed.protocol === 'https:' && (parsed.hostname === 'asaas.com' || parsed.hostname.endsWith('.asaas.com'))) safePaymentUrl = parsed.toString();
+  } catch { /* link ausente ou inválido */ }
+  if (advanceBox && advanceButton) {
+    advanceBox.hidden = !safePaymentUrl;
+    if (safePaymentUrl) {
+      advanceTitle.textContent = subscription?.next_payment_status === 'paid' ? 'Próximo período pago' : 'Próxima cobrança disponível';
+      advanceCopy.textContent = `${formatBillingMoney(subscription?.next_payment_amount_cents)} · vencimento ${formatBillingDate(subscription?.next_payment_due_at)}. A cobrança antecipada é a mesma registrada no Asaas.`;
+      advanceButton.href = safePaymentUrl;
+    } else advanceButton.removeAttribute('href');
   }
-
-  button.hidden = ['active', 'trialing', 'past_due'].includes(status)
-    || (status === 'pending' && Boolean(subscription?.checkout_completed_at || subscription?.provider_subscription_id));
-  button.disabled = !navigator.onLine || !cloudSession?.access_token;
-  button.textContent = status === 'pending' && subscription?.provider_checkout_id
-    ? 'Continuar checkout pelo Asaas'
-    : (subscription?.trial_started_at || paidCycles > 0)
-      ? `Assinar por R$ ${paidCycles < 3 ? '40' : '50'}/mês`
-      : 'Iniciar 15 dias grátis';
+  renderBillingHistory(periods);
   const returnNotice = billingReturnNotice();
   if (returnNotice) setBillingFeedback(returnNotice);
 }
 
+async function refreshWorkspaceEntitlement() {
+  if (!isBillingEnabled() || !cloudSession?.access_token) return null;
+  if (!navigator.onLine) {
+    const cached = readCachedBillingEntitlement();
+    if (cached) applyBillingEntitlement(cached, billingHistory);
+    else applyBillingEntitlement({ state: 'offline_unknown', access_allowed: true, legacy_access: false, server_now: new Date().toISOString() }, billingHistory);
+    return billingEntitlement;
+  }
+  if (billingRefreshPromise) return billingRefreshPromise;
+  billingRefreshPromise = (async () => {
+    const session = await usableCloudSession();
+    if (!cloudWorkspaceId) await getWorkspaceMembership();
+    const entitlement = await cloudFetch('/rest/v1/rpc/get_grafiflow_entitlement', {
+      method: 'POST', token: session.access_token, body: { p_workspace_id: cloudWorkspaceId },
+    });
+    const periods = await cloudFetch(`/rest/v1/workspace_billing_periods?select=plan_type,cycle_number,period_start,period_end,amount_cents,status,due_at,paid_at,is_advance_payment,created_at&workspace_id=eq.${encodeURIComponent(cloudWorkspaceId)}&order=created_at.desc&limit=24`, { token: session.access_token });
+    applyBillingEntitlement(entitlement, periods);
+    if (!billingReturnNotice()) setBillingFeedback('');
+    return entitlement;
+  })().catch((error) => {
+    const cached = readCachedBillingEntitlement();
+    if (cached) applyBillingEntitlement(cached, billingHistory);
+    const message = String(error?.message || 'Não foi possível consultar a assinatura.');
+    setBillingFeedback(message, true);
+    if (!cached) {
+      applyBillingEntitlement({ state: 'payment_pending', access_allowed: false, legacy_access: false, server_now: new Date().toISOString() }, []);
+    }
+    return billingEntitlement;
+  }).finally(() => { billingRefreshPromise = null; });
+  return billingRefreshPromise;
+}
+
 async function loadWorkspaceBilling() {
-  const panel = document.getElementById('billing-panel');
-  if (!panel) return;
-  panel.hidden = !isBillingEnabled();
-  if (panel.hidden) return;
+  if (!isBillingEnabled()) return;
   if (!cloudSession?.access_token) {
-    renderWorkspaceBilling(null);
-    setBillingFeedback('Entre na sua conta para consultar ou iniciar uma assinatura.');
+    setBillingFeedback('Entre na sua conta para consultar ou iniciar uma assinatura.', true);
     return;
   }
-
   const description = document.getElementById('billing-description');
   if (description) description.textContent = 'Consultando sua assinatura...';
+  await refreshWorkspaceEntitlement();
+}
+
+async function startGrafiflowTrial() {
+  const button = document.getElementById('billing-start-trial-button');
+  if (!button || !isBillingEnabled() || button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Ativando teste…';
   try {
     const session = await usableCloudSession();
     if (!cloudWorkspaceId) await getWorkspaceMembership();
-    const columns = 'status,billing_phase,paid_cycle_count,trial_started_at,trial_ends_at,last_payment_at,last_payment_status,provider_checkout_id,provider_subscription_id,checkout_completed_at';
-    const rows = await cloudFetch(`/rest/v1/workspace_subscriptions?select=${columns}&workspace_id=eq.${encodeURIComponent(cloudWorkspaceId)}&limit=1`, { token: session.access_token });
-    const subscription = Array.isArray(rows) ? rows[0] || null : null;
-    renderWorkspaceBilling(subscription);
-    if (!billingReturnNotice()) setBillingFeedback('');
+    const entitlement = await cloudFetch('/rest/v1/rpc/start_grafiflow_trial', {
+      method: 'POST',
+      token: session.access_token,
+      body: { p_workspace_id: cloudWorkspaceId },
+    });
+    applyBillingEntitlement(entitlement, billingHistory);
+    await loadWorkspaceBilling();
   } catch (error) {
-    renderWorkspaceBilling(null);
-    const status = document.getElementById('billing-status-badge');
-    if (status) {
-      status.textContent = 'Indisponível';
-      status.dataset.status = 'incomplete';
-    }
-    const message = String(error?.message || 'Não foi possível consultar a assinatura.');
-    const description = document.getElementById('billing-description');
-    if (description) description.textContent = 'A assinatura não pôde ser consultada. Verifique a conexão e tente novamente.';
-    const button = document.getElementById('billing-checkout-button');
-    if (button) button.disabled = true;
-    setBillingFeedback(message, true);
+    const status = document.getElementById('billing-gate-status');
+    if (status) { status.hidden = false; status.textContent = error.message || 'Não foi possível iniciar o teste grátis.'; }
+    setBillingFeedback(error.message || 'Não foi possível iniciar o teste grátis.', true);
+    showToast(error.message || 'Não foi possível iniciar o teste grátis.', 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Inicie seu teste grátis de 15 dias';
   }
 }
 
-async function startAsaasCheckout() {
-  const button = document.getElementById('billing-checkout-button');
-  if (!button || !isBillingEnabled()) return;
-  button.disabled = true;
-  button.dataset.pending = 'true';
+async function startAsaasCheckout(planType = 'monthly', sourceButton = null) {
+  if (!isBillingEnabled()) return;
+  const buttons = [...document.querySelectorAll('[data-billing-plan]')];
+  buttons.forEach((button) => { button.disabled = true; button.dataset.pending = 'true'; });
   setBillingFeedback('Preparando o checkout seguro do Asaas...');
+  const gateStatus = document.getElementById('billing-gate-status');
+  if (gateStatus) { gateStatus.hidden = false; gateStatus.textContent = 'Preparando o checkout seguro do Asaas…'; }
   try {
     const session = await usableCloudSession();
     if (!cloudWorkspaceId) await getWorkspaceMembership();
     const response = await fetch('/api/asaas/checkout', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ workspaceId: cloudWorkspaceId }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ workspaceId: cloudWorkspaceId, planType }),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Não foi possível iniciar o checkout.');
-    const checkoutUrl = new URL(result.checkoutUrl);
+    const destination = result.paymentUrl || result.checkoutUrl;
+    const checkoutUrl = new URL(destination);
     if (checkoutUrl.protocol !== 'https:' || !(checkoutUrl.hostname === 'asaas.com' || checkoutUrl.hostname.endsWith('.asaas.com'))) {
-      throw new Error('O Asaas retornou um endereço de checkout inválido.');
+      throw new Error('O Asaas retornou um endereço de pagamento inválido.');
     }
     window.location.assign(checkoutUrl.toString());
   } catch (error) {
     setBillingFeedback(error.message || 'Não foi possível iniciar o checkout.', true);
-    delete button.dataset.pending;
-    button.disabled = !navigator.onLine || !cloudSession?.access_token;
+    if (gateStatus) { gateStatus.hidden = false; gateStatus.textContent = error.message || 'Não foi possível iniciar o checkout.'; }
+    if (sourceButton) sourceButton.focus();
+    await refreshWorkspaceEntitlement();
+  } finally {
+    buttons.forEach((button) => { delete button.dataset.pending; button.disabled = !navigator.onLine || !cloudSession?.access_token; });
   }
+}
+
+function openBillingAccount() {
+  const gate = document.getElementById('billing-gate');
+  if (gate) gate.hidden = true;
+  openAccountModal();
+  loadWorkspaceBilling();
 }
 
 async function usableCloudSession() {
@@ -918,10 +1197,16 @@ function initializeCrossTabSync() {
     if (!document.hidden) syncAfterWake();
   }, 20000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) syncAfterWake();
+    if (!document.hidden) {
+      syncAfterWake();
+      if (isBillingEnabled()) void refreshWorkspaceEntitlement();
+    }
   });
   document.addEventListener('focusout', scheduleDeferredDraftSync);
-  window.addEventListener('focus', syncAfterWake);
+  window.addEventListener('focus', () => {
+    syncAfterWake();
+    if (isBillingEnabled()) void refreshWorkspaceEntitlement();
+  });
 }
 
 async function getWorkspaceMembership() {
@@ -1681,11 +1966,45 @@ function setAuthAccessUI(authenticated) {
   const appShell = document.querySelector('.app-shell');
   const accountModal = document.getElementById('account-modal');
   const bootstrap = document.getElementById('auth-bootstrap-screen');
+  const billingGate = document.getElementById('billing-gate');
   body?.classList.remove('auth-pending');
   body?.classList.toggle('auth-gate-active', !authenticated);
   if (bootstrap) bootstrap.hidden = true;
   if (appShell) appShell.hidden = !authenticated;
   if (accountModal) accountModal.hidden = authenticated;
+  if (!authenticated) {
+    body?.classList.remove('billing-locked', 'billing-verifying');
+    if (appShell) appShell.inert = false;
+    if (billingGate) billingGate.hidden = true;
+    if (billingRefreshTimer) clearInterval(billingRefreshTimer);
+    billingRefreshTimer = null;
+  } else if (isBillingEnabled()) {
+    body?.classList.remove('billing-locked');
+    body?.classList.add('billing-verifying');
+    if (appShell) appShell.inert = true;
+    if (billingGate) billingGate.hidden = false;
+    const title = document.getElementById('billing-gate-title');
+    const copy = document.getElementById('billing-gate-copy');
+    const status = document.getElementById('billing-gate-status');
+    if (title) title.textContent = 'Verificando sua assinatura';
+    if (copy) copy.textContent = '';
+    if (status) { status.hidden = false; status.textContent = 'Consultando o status da sua assinatura…'; }
+    if (billingRefreshTimer) clearInterval(billingRefreshTimer);
+    billingRefreshTimer = setInterval(() => {
+      if (!document.hidden && cloudSession?.access_token) void refreshWorkspaceEntitlement();
+    }, 15_000);
+    if (!navigator.onLine) {
+      const cached = readCachedBillingEntitlement();
+      if (cached) applyBillingEntitlement(cached, billingHistory);
+      else applyBillingEntitlement({ state: 'offline_unknown', access_allowed: true, legacy_access: false, server_now: new Date().toISOString() }, billingHistory);
+    } else {
+      void refreshWorkspaceEntitlement();
+    }
+  } else {
+    body?.classList.remove('billing-locked', 'billing-verifying');
+    if (appShell) appShell.inert = false;
+    if (billingGate) billingGate.hidden = true;
+  }
 }
 
 function openAccountModal() {
@@ -1695,6 +2014,10 @@ function openAccountModal() {
   updateAccountStatus();
   const modal = document.getElementById('account-modal');
   if (modal) modal.hidden = false;
+  if (document.body.classList.contains('billing-locked')) {
+    const gate = document.getElementById('billing-gate');
+    if (gate) gate.hidden = true;
+  }
   if (authMode === 'account') {
     fillAccountProfileForm();
     loadAccountProfile().catch((error) => updateAccountStatus(error.message || 'Não foi possível carregar o perfil.'));
@@ -4061,8 +4384,14 @@ function updateConnectionStatus() {
   }
   sidebarDot?.classList.toggle('online', online);
   if (sidebarText) sidebarText.textContent = online ? 'Conexão disponível' : 'Modo local ativo';
-  const billingButton = document.getElementById('billing-checkout-button');
-  if (billingButton && billingButton.dataset.pending !== 'true') billingButton.disabled = !online || !cloudSession?.access_token;
+  document.querySelectorAll('[data-billing-plan], #billing-start-trial-button').forEach((button) => {
+    if (button.dataset.pending !== 'true') button.disabled = !online || !cloudSession?.access_token;
+  });
+  const advanceButton = document.getElementById('billing-advance-button');
+  if (advanceButton) {
+    advanceButton.setAttribute('aria-disabled', online ? 'false' : 'true');
+    advanceButton.tabIndex = online ? 0 : -1;
+  }
   updateAccountStatus();
 }
 
@@ -4099,6 +4428,11 @@ function registerWebMcpTools() {
 }
 
 function handleClick(event) {
+  const billingPlan = event.target.closest('[data-billing-plan]');
+  if (billingPlan) {
+    void startAsaasCheckout(billingPlan.dataset.billingPlan, billingPlan);
+    return;
+  }
   const nav = event.target.closest('.nav-item');
   if (nav) {
     switchView(nav.dataset.view);
@@ -4148,6 +4482,8 @@ function handleClick(event) {
     return;
   }
   const id = event.target.closest('button')?.id;
+  if (id === 'billing-start-trial-button') void startGrafiflowTrial();
+  if (id === 'billing-open-account-button') openBillingAccount();
   if (id === 'new-quote-button' || id === 'quotes-new-button') resetCurrentCalculation();
   if (id === 'clear-quote-button') clearCurrentQuote();
   if (id === 'save-quote-button') saveQuote();
@@ -4165,6 +4501,10 @@ function handleClick(event) {
   if (id === 'profile-use-account-address') copyAccountAddressToQuote();
   if ((id === 'close-account-modal' || id === 'cancel-account-modal') && !document.body.classList.contains('auth-gate-active')) {
     document.getElementById('account-modal').hidden = true;
+    if (document.body.classList.contains('billing-locked')) {
+      const gate = document.getElementById('billing-gate');
+      if (gate) gate.hidden = false;
+    }
   }
   if (id === 'auth-mode-toggle') {
     authMode = authMode === 'signup' ? 'login' : 'signup';
@@ -4288,7 +4628,6 @@ function initialize() {
   document.getElementById('password-recovery-form')?.addEventListener('submit', submitRecoveredPassword);
   document.getElementById('change-password-form')?.addEventListener('submit', submitPasswordChange);
   document.getElementById('account-profile-form')?.addEventListener('submit', submitAccountProfile);
-  document.getElementById('billing-checkout-button')?.addEventListener('click', startAsaasCheckout);
   document.getElementById('restore-input')?.addEventListener('change', (event) => importBackup(event.target.files?.[0]));
   document.getElementById('layout-modal')?.addEventListener('click', (event) => {
     if (event.target.id === 'layout-modal') event.currentTarget.hidden = true;
@@ -4300,7 +4639,13 @@ function initialize() {
     if (event.target.id === 'client-quote-modal') closeClientQuoteModal();
   });
   document.getElementById('account-modal')?.addEventListener('click', (event) => {
-    if (event.target.id === 'account-modal' && !document.body.classList.contains('auth-gate-active')) event.currentTarget.hidden = true;
+    if (event.target.id === 'account-modal' && !document.body.classList.contains('auth-gate-active')) {
+      event.currentTarget.hidden = true;
+      if (document.body.classList.contains('billing-locked')) {
+        const gate = document.getElementById('billing-gate');
+        if (gate) gate.hidden = false;
+      }
+    }
   });
   window.addEventListener('afterprint', () => {
     document.body.classList.remove('client-quote-printing');
@@ -4309,6 +4654,7 @@ function initialize() {
   window.addEventListener('online', updateConnectionStatus);
   window.addEventListener('offline', updateConnectionStatus);
   window.addEventListener('online', syncAfterWake);
+  window.addEventListener('online', () => { if (isBillingEnabled()) void refreshWorkspaceEntitlement(); });
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();
     deferredInstallPrompt = event;
@@ -4373,7 +4719,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261030-asaas-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261031-subscription-v2').catch(() => undefined);
 }
 
 initialize();

@@ -28,23 +28,42 @@ export async function POST(request) {
     try { payload = JSON.parse(raw); } catch { return jsonResponse({ error: 'JSON inválido.' }, 400); }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return jsonResponse({ error: 'Evento inválido.' }, 400);
 
-    const result = await supabaseRequest('/rest/v1/rpc/process_asaas_billing_event', {
+    const result = await supabaseRequest('/rest/v1/rpc/process_grafiflow_billing_event', {
       config,
       method: 'POST',
       body: { p_payload: payload },
     });
 
-    if (result?.upgradeRequired && result.subscriptionId) {
+    if (result?.requiredAction === 'upgrade_monthly_price' && result.subscriptionId) {
       await callAsaas(`/subscriptions/${encodeURIComponent(result.subscriptionId)}`, {
         config,
         method: 'PUT',
         body: { value: 50, updatePendingPayments: true },
       });
-      await supabaseRequest('/rest/v1/rpc/complete_asaas_price_upgrade', {
+      await supabaseRequest('/rest/v1/rpc/complete_grafiflow_billing_action', {
         config,
         method: 'POST',
-        body: { p_event_id: payload.id, p_provider_subscription_id: result.subscriptionId },
+        body: { p_event_id: payload.id, p_action: 'upgrade_monthly_price', p_subscription_id: result.subscriptionId },
       });
+    } else if (result?.requiredAction === 'delete_subscription' && result.subscriptionId) {
+      try {
+        await callAsaas(`/subscriptions/${encodeURIComponent(result.subscriptionId)}`, {
+          config,
+          method: 'DELETE',
+        });
+      } catch (error) {
+        // A 404 means the requested end state already exists; complete the idempotent DB action.
+        if (error?.asaasStatus !== 404) throw error;
+      }
+      await supabaseRequest('/rest/v1/rpc/complete_grafiflow_billing_action', {
+        config,
+        method: 'POST',
+        body: { p_event_id: payload.id, p_action: 'delete_subscription', p_subscription_id: result.subscriptionId },
+      });
+    }
+
+    if (result?.amountMismatch) {
+      console.error('Pagamento Asaas com valor divergente; acesso não liberado.', payload.id, result.expectedCents);
     }
 
     return jsonResponse({ received: true }, 200);

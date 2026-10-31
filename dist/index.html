@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261030-asaas-v1" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261031-subscription-v2" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261030-asaas-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20261031-subscription-v2" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -62,6 +62,7 @@
           <div class="page-heading">
             <span class="eyebrow" id="page-eyebrow">OFICINA / PRODUÇÃO</span>
             <h1 id="page-title">Calculadora</h1>
+            <div id="billing-countdown" class="billing-countdown" hidden aria-live="polite"></div>
           </div>
           <div class="topbar-actions">
             <button class="secondary-button" id="manual-sync-button" type="button" title="Enviar e receber atualizações deste dispositivo">⟳ Sincronizar</button>
@@ -286,8 +287,35 @@
           <section id="billing-panel" class="billing-panel" aria-labelledby="billing-title" hidden>
             <div class="billing-panel-heading"><div><span class="section-kicker">ASSINATURA</span><h3 id="billing-title">Plano GrafiFlow</h3></div><span id="billing-status-badge" class="billing-status-badge">Carregando</span></div>
             <p id="billing-description" class="billing-description" aria-live="polite">Consultando sua assinatura...</p>
-            <p class="billing-price-note">15 dias grátis; depois R$ 40/mês nas três primeiras cobranças e R$ 50/mês a partir da quarta. O checkout solicitará um cartão; a primeira cobrança ocorre após o teste.</p>
-            <button id="billing-checkout-button" class="primary-button account-submit" type="button">Assinar com segurança pelo Asaas</button>
+            <dl class="billing-summary-grid">
+              <div><dt>Plano atual</dt><dd id="billing-current-plan">—</dd></div>
+              <div><dt>Vigência paga</dt><dd id="billing-period-label">—</dd></div>
+              <div><dt>Próximo vencimento</dt><dd id="billing-due-label">—</dd></div>
+              <div><dt>Último pagamento</dt><dd id="billing-last-payment-label">—</dd></div>
+            </dl>
+            <div class="billing-plan-options">
+              <article class="billing-plan-card">
+                <span class="section-kicker">PLANO MENSAL</span>
+                <strong>R$ 35,00/mês</strong>
+                <p>Nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
+                <button id="billing-checkout-button" class="secondary-button" type="button" data-billing-plan="monthly">Contratar plano mensal</button>
+              </article>
+              <article class="billing-plan-card">
+                <span class="section-kicker">PLANO ANUAL</span>
+                <strong>R$ 450,00 à vista</strong>
+                <p>12 meses de acesso. Pagamento único, sem parcelamento.</p>
+                <button id="billing-annual-checkout-button" class="primary-button" type="button" data-billing-plan="annual">Contratar plano anual</button>
+              </article>
+            </div>
+            <div id="billing-advance-box" class="billing-advance-box" hidden>
+              <div><strong id="billing-advance-title">Próxima cobrança</strong><p id="billing-advance-copy"></p></div>
+              <a id="billing-advance-button" class="secondary-button" href="#" target="_blank" rel="noopener noreferrer">Pagar antecipadamente</a>
+            </div>
+            <section class="billing-history" aria-labelledby="billing-history-title">
+              <h4 id="billing-history-title">Histórico financeiro</h4>
+              <div id="billing-history-list" class="billing-history-list"><p class="billing-history-empty">Nenhum pagamento registrado.</p></div>
+            </section>
+            <p class="billing-price-note">O acesso é liberado somente após confirmação real do Asaas. A mensalidade vencida tem 10 dias de carência; o teste grátis termina sem carência.</p>
             <p id="billing-feedback" class="billing-feedback" aria-live="polite" hidden></p>
           </section>
           <form id="account-profile-form" class="account-auth-form">
@@ -339,6 +367,29 @@
         </section>
       </div>
     </div>
+    <div id="billing-gate" class="billing-gate" role="dialog" aria-modal="true" aria-labelledby="billing-gate-title" hidden>
+      <section class="billing-gate-card">
+        <span class="section-kicker">MINHA ASSINATURA</span>
+        <h2 id="billing-gate-title">Experimente gratuitamente por 15 dias</h2>
+        <p id="billing-gate-copy">Aproveite todas as funcionalidades do sistema gratuitamente durante 15 dias. Explore os recursos antes de decidir assinar.</p>
+        <p id="billing-gate-status" class="billing-gate-status" aria-live="polite" hidden></p>
+        <button id="billing-start-trial-button" class="primary-button billing-start-trial" type="button">Inicie seu teste grátis de 15 dias</button>
+        <p id="billing-trial-note" class="billing-trial-note">Seu teste começa apenas quando você clicar no botão.</p>
+        <div class="billing-plan-options billing-gate-plans">
+          <article class="billing-plan-card">
+            <span class="section-kicker">PLANO MENSAL</span><strong>R$ 35,00/mês</strong>
+            <p>Nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
+            <button class="secondary-button" type="button" data-billing-plan="monthly">Assinar plano mensal</button>
+          </article>
+          <article class="billing-plan-card">
+            <span class="section-kicker">PLANO ANUAL</span><strong>R$ 450,00 à vista</strong>
+            <p>12 meses de acesso. Pagamento único, sem parcelamento.</p>
+            <button class="primary-button" type="button" data-billing-plan="annual">Assinar plano anual</button>
+          </article>
+        </div>
+        <button id="billing-open-account-button" class="text-button billing-open-account" type="button">Abrir Minha Assinatura</button>
+      </section>
+    </div>
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div class="modal-backdrop" id="material-picker-modal" hidden><div class="modal-card material-picker-modal-card" role="dialog" aria-modal="true" aria-labelledby="material-picker-title"><div class="modal-heading"><div><span class="section-kicker">CATÁLOGO LOCAL</span><h2 id="material-picker-title">Puxar produto do catálogo</h2><p class="muted-copy">O material escolhido substituirá o material principal. Para incluir outra mídia, use “+ Novo material”.</p></div><button class="icon-button" id="close-material-picker" type="button" aria-label="Fechar">×</button></div><div id="material-picker-list" class="material-picker-list"></div></div></div>
     <div class="modal-backdrop" id="layout-modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="layout-modal-title"><div class="modal-heading"><div><span class="section-kicker">VISUALIZAÇÃO AMPLIADA</span><h2 id="layout-modal-title">Mapa de corte</h2></div><button class="icon-button" id="close-layout-modal" type="button" aria-label="Fechar">×</button></div><div id="modal-layout-canvas" class="modal-layout-canvas"></div></div></div>
@@ -359,7 +410,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./config.js?v=20261030-asaas-v1"></script>
-    <script type="module" src="./app.js?v=20261030-asaas-v1"></script>
+    <script src="./config.js?v=20261031-subscription-v2"></script>
+    <script type="module" src="./app.js?v=20261031-subscription-v2"></script>
   </body>
 </html>
