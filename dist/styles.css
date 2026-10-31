@@ -100,6 +100,7 @@ h3 { margin: 6px 0 0; color: var(--ink); font-size: 1.01rem; letter-spacing: -0.
 .quote-name-wrap label, .field > span { display: block; color: var(--muted); font-size: 0.73rem; font-weight: 750; margin-bottom: 7px; }
 .quote-name-wrap label:not(:first-child) { margin-top: 10px; }
 small { color: #718898; font-size: 0.68rem; font-weight: 650; }
+.field-hint { display: block; margin: -4px 0 7px; font-size: 0.62rem; font-weight: 500; line-height: 1.25; }
 input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; color: var(--ink); background: #fff; font-size: 0.82rem; min-height: 40px; }
 textarea { resize: vertical; line-height: 1.4; }
 input::placeholder { color: #9ab0bd; }
