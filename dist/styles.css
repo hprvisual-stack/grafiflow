@@ -491,6 +491,17 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .account-cep-status { display: block; margin-top: 4px; color: var(--muted); font-size: 0.68rem; line-height: 1.35; }
 .account-email-line { margin: 0; color: var(--muted); font-size: 0.78rem; }
 .account-email-line strong { color: var(--ink); }
+.billing-panel { display: grid; gap: 10px; padding: 16px; border: 1px solid #c7e9e7; border-radius: 14px; background: linear-gradient(145deg, #f0fbfa, #f7fbff); }
+.billing-panel[hidden] { display: none !important; }
+.billing-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.billing-panel-heading h3 { margin: 4px 0 0; color: var(--ink); font-size: 1rem; }
+.billing-status-badge { flex: 0 0 auto; padding: 5px 9px; border-radius: 999px; color: #08796c; background: #d8f5ee; font-size: 0.7rem; font-weight: 800; }
+.billing-status-badge[data-status="past_due"], .billing-status-badge[data-status="incomplete"] { color: #9a4e05; background: #fff0d7; }
+.billing-status-badge[data-status="canceled"] { color: #5a6d7f; background: #e9eff4; }
+.billing-description, .billing-price-note, .billing-feedback { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
+.billing-price-note { color: #315b75; }
+.billing-feedback { color: #9a4e05; }
+.billing-feedback[data-error="true"] { color: #b42338; }
 .password-change-form { padding-top: 16px; border-top: 1px solid var(--line); }
 .account-close-actions { justify-content: flex-end; }
 #auth-login-view[hidden], #recovery-request-form[hidden], #password-recovery-form[hidden], #account-settings-view[hidden] { display: none !important; }

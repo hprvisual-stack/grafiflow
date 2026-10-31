@@ -669,6 +669,156 @@ async function loadAccountProfile(user = cloudSession?.user) {
   return accountProfile;
 }
 
+function isBillingEnabled() {
+  return Boolean(window.GRAFIFLOW_CONFIG?.billingEnabled);
+}
+
+function billingReturnNotice() {
+  const state = new URLSearchParams(window.location.search).get('asaas');
+  if (state === 'success') return 'Checkout concluído. A assinatura será atualizada após a confirmação do Asaas.';
+  if (state === 'cancel') return 'Checkout cancelado. Você pode retomá-lo nesta tela.';
+  if (state === 'expired') return 'Checkout expirado. Ao continuar, o GrafiFlow solicitará um novo checkout.';
+  return '';
+}
+
+function setBillingFeedback(message = '', error = false) {
+  const feedback = document.getElementById('billing-feedback');
+  if (!feedback) return;
+  feedback.hidden = !message;
+  feedback.dataset.error = error ? 'true' : 'false';
+  feedback.textContent = message;
+}
+
+function renderWorkspaceBilling(subscription = null) {
+  const panel = document.getElementById('billing-panel');
+  const badge = document.getElementById('billing-status-badge');
+  const description = document.getElementById('billing-description');
+  const button = document.getElementById('billing-checkout-button');
+  if (!panel || !badge || !description || !button) return;
+
+  panel.hidden = !isBillingEnabled();
+  if (panel.hidden) return;
+
+  const status = subscription?.status || 'none';
+  const paidCycles = Number(subscription?.paid_cycle_count || 0);
+  const trialEndsAt = subscription?.trial_ends_at ? new Date(subscription.trial_ends_at) : null;
+  const trialEnd = trialEndsAt && !Number.isNaN(trialEndsAt.getTime())
+    ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeZone: 'America/Sao_Paulo' }).format(trialEndsAt)
+    : '';
+  const statusLabels = {
+    none: 'Não iniciada',
+    pending: 'Em processamento',
+    trialing: 'Período grátis',
+    active: 'Ativa',
+    past_due: 'Pagamento pendente',
+    canceled: 'Cancelada',
+    incomplete: 'Não concluída',
+  };
+  badge.textContent = statusLabels[status] || 'Indisponível';
+  badge.dataset.status = status;
+
+  if (status === 'trialing') {
+    description.textContent = trialEnd
+      ? `Seu período grátis vai até ${trialEnd}. Depois, serão R$ 40 por mês nas três primeiras cobranças.`
+      : 'Seu período grátis está ativo. Depois, serão R$ 40 por mês nas três primeiras cobranças.';
+  } else if (status === 'active' && subscription?.billing_phase === 'standard') {
+    description.textContent = 'Assinatura ativa por R$ 50 por mês.';
+  } else if (status === 'active') {
+    description.textContent = `Assinatura ativa. ${Math.min(paidCycles, 3)} de 3 cobranças promocionais de R$ 40 confirmadas; depois, R$ 50 por mês.`;
+  } else if (status === 'past_due') {
+    description.textContent = 'Há um pagamento pendente no Asaas. Não crie outra assinatura; regularize a cobrança pendente para evitar interrupção.';
+  } else if (status === 'pending' && (subscription?.checkout_completed_at || subscription?.provider_subscription_id)) {
+    description.textContent = 'Checkout concluído. Aguardando o Asaas confirmar e registrar a assinatura.';
+  } else if (status === 'pending' && subscription?.provider_checkout_id) {
+    description.textContent = 'Há um checkout em aberto. Você pode continuar de onde parou.';
+  } else if (status === 'incomplete') {
+    description.textContent = 'O checkout anterior foi cancelado ou expirou. Você pode iniciar outro quando quiser.';
+  } else if (status === 'canceled') {
+    description.textContent = 'A assinatura está cancelada. Você pode contratar novamente; o período grátis não se repete.';
+  } else {
+    description.textContent = 'Inicie sua assinatura com 15 dias grátis e cobrança recorrente segura pelo Asaas.';
+  }
+
+  button.hidden = ['active', 'trialing', 'past_due'].includes(status)
+    || (status === 'pending' && Boolean(subscription?.checkout_completed_at || subscription?.provider_subscription_id));
+  button.disabled = !navigator.onLine || !cloudSession?.access_token;
+  button.textContent = status === 'pending' && subscription?.provider_checkout_id
+    ? 'Continuar checkout pelo Asaas'
+    : (subscription?.trial_started_at || paidCycles > 0)
+      ? `Assinar por R$ ${paidCycles < 3 ? '40' : '50'}/mês`
+      : 'Iniciar 15 dias grátis';
+  const returnNotice = billingReturnNotice();
+  if (returnNotice) setBillingFeedback(returnNotice);
+}
+
+async function loadWorkspaceBilling() {
+  const panel = document.getElementById('billing-panel');
+  if (!panel) return;
+  panel.hidden = !isBillingEnabled();
+  if (panel.hidden) return;
+  if (!cloudSession?.access_token) {
+    renderWorkspaceBilling(null);
+    setBillingFeedback('Entre na sua conta para consultar ou iniciar uma assinatura.');
+    return;
+  }
+
+  const description = document.getElementById('billing-description');
+  if (description) description.textContent = 'Consultando sua assinatura...';
+  try {
+    const session = await usableCloudSession();
+    if (!cloudWorkspaceId) await getWorkspaceMembership();
+    const columns = 'status,billing_phase,paid_cycle_count,trial_started_at,trial_ends_at,last_payment_at,last_payment_status,provider_checkout_id,provider_subscription_id,checkout_completed_at';
+    const rows = await cloudFetch(`/rest/v1/workspace_subscriptions?select=${columns}&workspace_id=eq.${encodeURIComponent(cloudWorkspaceId)}&limit=1`, { token: session.access_token });
+    const subscription = Array.isArray(rows) ? rows[0] || null : null;
+    renderWorkspaceBilling(subscription);
+    if (!billingReturnNotice()) setBillingFeedback('');
+  } catch (error) {
+    renderWorkspaceBilling(null);
+    const status = document.getElementById('billing-status-badge');
+    if (status) {
+      status.textContent = 'Indisponível';
+      status.dataset.status = 'incomplete';
+    }
+    const message = String(error?.message || 'Não foi possível consultar a assinatura.');
+    const description = document.getElementById('billing-description');
+    if (description) description.textContent = 'A assinatura não pôde ser consultada. Verifique a conexão e tente novamente.';
+    const button = document.getElementById('billing-checkout-button');
+    if (button) button.disabled = true;
+    setBillingFeedback(message, true);
+  }
+}
+
+async function startAsaasCheckout() {
+  const button = document.getElementById('billing-checkout-button');
+  if (!button || !isBillingEnabled()) return;
+  button.disabled = true;
+  button.dataset.pending = 'true';
+  setBillingFeedback('Preparando o checkout seguro do Asaas...');
+  try {
+    const session = await usableCloudSession();
+    if (!cloudWorkspaceId) await getWorkspaceMembership();
+    const response = await fetch('/api/asaas/checkout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ workspaceId: cloudWorkspaceId }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Não foi possível iniciar o checkout.');
+    const checkoutUrl = new URL(result.checkoutUrl);
+    if (checkoutUrl.protocol !== 'https:' || !(checkoutUrl.hostname === 'asaas.com' || checkoutUrl.hostname.endsWith('.asaas.com'))) {
+      throw new Error('O Asaas retornou um endereço de checkout inválido.');
+    }
+    window.location.assign(checkoutUrl.toString());
+  } catch (error) {
+    setBillingFeedback(error.message || 'Não foi possível iniciar o checkout.', true);
+    delete button.dataset.pending;
+    button.disabled = !navigator.onLine || !cloudSession?.access_token;
+  }
+}
+
 async function usableCloudSession() {
   if (!cloudSession?.access_token) throw new Error('Entre na sua conta GrafiFlow para sincronizar.');
   if (!navigator.onLine) return cloudSession;
@@ -1548,6 +1698,7 @@ function openAccountModal() {
   if (authMode === 'account') {
     fillAccountProfileForm();
     loadAccountProfile().catch((error) => updateAccountStatus(error.message || 'Não foi possível carregar o perfil.'));
+    void loadWorkspaceBilling();
   }
 }
 
@@ -3910,6 +4061,8 @@ function updateConnectionStatus() {
   }
   sidebarDot?.classList.toggle('online', online);
   if (sidebarText) sidebarText.textContent = online ? 'Conexão disponível' : 'Modo local ativo';
+  const billingButton = document.getElementById('billing-checkout-button');
+  if (billingButton && billingButton.dataset.pending !== 'true') billingButton.disabled = !online || !cloudSession?.access_token;
   updateAccountStatus();
 }
 
@@ -4135,6 +4288,7 @@ function initialize() {
   document.getElementById('password-recovery-form')?.addEventListener('submit', submitRecoveredPassword);
   document.getElementById('change-password-form')?.addEventListener('submit', submitPasswordChange);
   document.getElementById('account-profile-form')?.addEventListener('submit', submitAccountProfile);
+  document.getElementById('billing-checkout-button')?.addEventListener('click', startAsaasCheckout);
   document.getElementById('restore-input')?.addEventListener('change', (event) => importBackup(event.target.files?.[0]));
   document.getElementById('layout-modal')?.addEventListener('click', (event) => {
     if (event.target.id === 'layout-modal') event.currentTarget.hidden = true;
@@ -4219,7 +4373,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261029-customers-v1').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261030-asaas-v1').catch(() => undefined);
 }
 
 initialize();

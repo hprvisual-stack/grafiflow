@@ -3,6 +3,9 @@
   "outputDirectory": "build",
   "framework": null,
   "cleanUrls": true,
+  "functions": {
+    "api/asaas/*.js": { "maxDuration": 30 }
+  },
   "headers": [
     {
       "source": "/(.*)",

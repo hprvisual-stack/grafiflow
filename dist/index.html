@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261029-customers-v1" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261030-asaas-v1" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261029-customers-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20261030-asaas-v1" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -283,6 +283,13 @@
             </form>
             <section id="account-settings-view" class="account-settings-view" hidden>
           <p class="account-email-line">Conta: <strong id="account-email-display"></strong></p>
+          <section id="billing-panel" class="billing-panel" aria-labelledby="billing-title" hidden>
+            <div class="billing-panel-heading"><div><span class="section-kicker">ASSINATURA</span><h3 id="billing-title">Plano GrafiFlow</h3></div><span id="billing-status-badge" class="billing-status-badge">Carregando</span></div>
+            <p id="billing-description" class="billing-description" aria-live="polite">Consultando sua assinatura...</p>
+            <p class="billing-price-note">15 dias grátis; depois R$ 40/mês nas três primeiras cobranças e R$ 50/mês a partir da quarta. O checkout solicitará um cartão; a primeira cobrança ocorre após o teste.</p>
+            <button id="billing-checkout-button" class="primary-button account-submit" type="button">Assinar com segurança pelo Asaas</button>
+            <p id="billing-feedback" class="billing-feedback" aria-live="polite" hidden></p>
+          </section>
           <form id="account-profile-form" class="account-auth-form">
             <section class="client-form-section">
               <span class="section-kicker">DADOS PESSOAIS</span><h3>Cadastro</h3>
@@ -352,7 +359,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./config.js?v=20261029-customers-v1"></script>
-    <script type="module" src="./app.js?v=20261029-customers-v1"></script>
+    <script src="./config.js?v=20261030-asaas-v1"></script>
+    <script type="module" src="./app.js?v=20261030-asaas-v1"></script>
   </body>
 </html>

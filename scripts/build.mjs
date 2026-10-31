@@ -12,6 +12,7 @@ cpSync(join(root, 'dist'), output, { recursive: true });
 const config = {
   supabaseUrl: process.env.GRAFIFLOW_SUPABASE_URL || '',
   supabaseAnonKey: process.env.GRAFIFLOW_SUPABASE_ANON_KEY || '',
+  billingEnabled: process.env.GRAFIFLOW_BILLING_ENABLED === 'true',
 };
 writeFileSync(join(output, 'config.js'), `window.GRAFIFLOW_CONFIG = Object.freeze(${JSON.stringify(config)});\n`);
 
