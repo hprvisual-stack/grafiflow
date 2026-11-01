@@ -12,11 +12,11 @@ O núcleo de cálculo não depende de conexão. A nuvem é uma camada opcional: 
 
 ## Publicação na Vercel
 
-1. Configure no projeto Vercel as variáveis `GRAFIFLOW_SUPABASE_URL` e `GRAFIFLOW_SUPABASE_ANON_KEY`.
+1. Configure no projeto Vercel as variáveis `GRAFIFLOW_SUPABASE_URL` e `GRAFIFLOW_SUPABASE_ANON_KEY`. O app as lê em runtime por `/api/config`; a chave pública e a flag de cobrança são as únicas configurações enviadas ao navegador.
 2. Use `npm run build` como comando de build e `build` como diretório de saída (já definido em `vercel.json`).
 3. A chave `anon` do Supabase é uma chave pública para uso no navegador. **Nunca configure `service_role` no front-end ou na Vercel como variável exposta ao cliente.** As regras RLS protegem os dados.
 
-Sem as duas variáveis, o app é publicado e funciona localmente, mas a conta e a sincronização em nuvem ficam desativadas.
+Sem as duas variáveis, o app continua funcionando offline, mas a conta e a sincronização em nuvem ficam desativadas.
 
 ## Supabase
 
@@ -33,7 +33,7 @@ Ao informar um CEP completo em Minha conta, o GrafiFlow consulta o ViaCEP e suge
 1. Crie um repositório **privado** no GitHub e envie o conteúdo deste pacote mantendo `dist/`, `scripts/` e `supabase/` na raiz.
 2. No Supabase, crie um projeto e execute o SQL da migração acima. Copie a Project URL e a chave pública `anon`/publishable.
 3. Na Vercel, importe o repositório do GitHub. O projeto já define `npm run build` e a pasta `build` como saída.
-4. Nas variáveis de ambiente da Vercel, defina `GRAFIFLOW_SUPABASE_URL` e `GRAFIFLOW_SUPABASE_ANON_KEY` e publique novamente.
+4. Nas variáveis de ambiente da Vercel, defina `GRAFIFLOW_SUPABASE_URL` e `GRAFIFLOW_SUPABASE_ANON_KEY` e publique novamente. A rota `/api/config` entrega essas configurações públicas em runtime.
 5. Abra o endereço publicado, crie uma conta GrafiFlow e teste cadastro, sincronização entre dois dispositivos e uso offline.
 
 Os dados locais do site antigo pertencem à origem antiga do navegador. Exporte um backup nele e importe no novo GrafiFlow para levar catálogo e orçamentos; a primeira sincronização enviará os dados importados à conta conectada.

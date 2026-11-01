@@ -1,11 +1,11 @@
-const CACHE_NAME = 'grafiflow-static-v44';
+const CACHE_NAME = 'grafiflow-static-v45';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20261101-auth-scroll-fix',
-  './app.js?v=20261101-auth-scroll-fix',
-  './config.js?v=20261101-auth-scroll-fix',
-  './manifest.webmanifest?v=20261101-auth-scroll-fix',
+  './styles.css?v=20261101-billing-runtime-config',
+  './app.js?v=20261101-billing-runtime-config',
+  './api/config?v=20261101-billing-runtime-config',
+  './manifest.webmanifest?v=20261101-billing-runtime-config',
   './grafiflow-favicon-v3.png',
   './grafiflow-logo.jpg',
   './login-print-roll-v1.png',

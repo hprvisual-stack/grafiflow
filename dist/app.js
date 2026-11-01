@@ -4719,7 +4719,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261101-auth-scroll-fix').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261101-billing-runtime-config').catch(() => undefined);
 }
 
 initialize();
