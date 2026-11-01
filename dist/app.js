@@ -377,7 +377,7 @@ function saveCloudSession(session) {
   } catch (error) {
     console.warn('A sessão não pôde ser mantida neste navegador.', error);
   }
-  updateAccountStatus();
+  updateConnectionStatus();
 }
 
 function catalogRecordType(category) {

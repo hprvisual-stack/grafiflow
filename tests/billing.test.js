@@ -177,3 +177,22 @@ test('monthly checkout uses a backend-provided cycle price and recurrence only',
   assert.deepEqual(payload.subscription, { cycle: 'MONTHLY', nextDueDate: '2026-10-31' });
   assert.equal('installment' in payload, false);
 });
+
+test('sign-in and session restore refresh payment button availability', () => {
+  const saveSessionStart = appSource.indexOf('function saveCloudSession(session) {');
+  const saveSessionEnd = appSource.indexOf('\n}\n', saveSessionStart);
+  const saveSessionSource = appSource.slice(saveSessionStart, saveSessionEnd);
+  assert.notEqual(saveSessionStart, -1);
+  assert.match(saveSessionSource, /updateConnectionStatus\(\)/);
+  assert.match(appSource, /querySelectorAll\('\[data-billing-plan\], #billing-start-trial-button'\)[\s\S]*button\.disabled = !online \|\| !cloudSession\?\.access_token/);
+});
+
+test('trial RPC only starts for an authenticated workspace owner and grants fifteen days once', () => {
+  const trialFunction = migration.match(/create or replace function public\.start_grafiflow_trial\(p_workspace_id uuid\)[\s\S]*?grant execute on function public\.start_grafiflow_trial\(uuid\) to authenticated;/)?.[0] || '';
+  assert.match(trialFunction, /auth\.uid\(\) is null/);
+  assert.match(trialFunction, /role = 'owner'/);
+  assert.match(trialFunction, /trial_used = true/);
+  assert.match(trialFunction, /interval '360 hours'/);
+  assert.match(trialFunction, /revoke all on function public\.start_grafiflow_trial\(uuid\) from public, anon/);
+  assert.match(trialFunction, /grant execute on function public\.start_grafiflow_trial\(uuid\) to authenticated/);
+});
