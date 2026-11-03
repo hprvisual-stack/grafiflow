@@ -9,6 +9,7 @@ Use este checklist para passar da homologação para cobrança real. A configura
 - [ ] **Banco, backups e disponibilidade:** o Supabase Free pode pausar projeto por inatividade e não fornece backup automático diário para download. Ativar um plano com backup diário ou configurar e testar exportações externas periódicas do banco e dos arquivos de Storage.
 - [ ] **Homologação isolada:** criar um projeto Supabase separado para Preview/testes. O flag `private.grafiflow_billing_settings.enforcement_enabled` e os trials são compartilhados por qualquer deployment que use o mesmo banco.
 - [ ] **E-mail de produção:** configurar SMTP transacional próprio no Supabase Auth, confirmar domínio remetente, SPF/DKIM/DMARC, redirects para `https://grafiflow.vercel.app` e testar confirmação de cadastro e recuperação de senha em endereços externos à equipe.
+- [ ] **Bloqueio após cinco senhas erradas:** o hook Password Verification Attempt está disponível apenas nos planos Supabase Teams e Enterprise. Como o projeto está no Free, esse bloqueio específico não pode ser ativado nesse plano; não o anuncie como ativo. Para mantê-lo, será necessário migrar para um plano compatível ou aprovar e revisar uma alternativa de autenticação no servidor.
 - [ ] **Asaas de produção:** usar uma chave API de produção e webhook criados na conta de produção do Asaas. Sandbox e produção são contas e credenciais distintas. Não reutilizar chave Sandbox em produção nem compartilhar chaves em chats ou no Git.
 - [ ] **Dados legais e atendimento:** completar os campos `[PENDENTE]` das páginas de termos e privacidade, incluindo responsável, contato, cancelamento, retenção, exclusão/exportação e regras de cobrança. Revisar o texto com orientação jurídica. As páginas estão com `noindex` enquanto incompletas.
 - [ ] **Identidade no checkout:** abrir um checkout de homologação e confirmar qual nome comercial/legal o pagador verá. Resolver a apresentação da conta Asaas antes da divulgação.
@@ -55,6 +56,7 @@ Liberar primeiro para um grupo pequeno. Só divulgar publicamente depois de conc
 - [Plano Vercel Hobby](https://vercel.com/docs/plans/hobby)
 - [Checklist de produção do Supabase](https://supabase.com/docs/guides/deployment/going-into-prod)
 - [SMTP próprio no Supabase Auth](https://supabase.com/docs/guides/auth/auth-smtp)
+- [Planos compatíveis com Auth Hooks](https://supabase.com/docs/guides/auth/auth-hooks)
 - [Backups Supabase](https://supabase.com/docs/guides/platform/backups)
 - [Sandbox do Asaas](https://docs.asaas.com/docs/sandbox-2)
 - [Checkout recorrente e webhooks do Asaas](https://docs.asaas.com/docs/checkout-with-subscription-recurring)
