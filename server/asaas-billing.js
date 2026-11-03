@@ -2,6 +2,7 @@ const BRAZIL_TIME_ZONE = 'America/Sao_Paulo';
 const CHECKOUT_MINUTES_TO_EXPIRE = 60;
 export { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_CYCLES, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS, monthlyPriceCents, addCalendarMonths, deriveEntitlement, countdownLabel, buildAsaasCheckoutPayload, buildAsaasMonthlyPaymentLinkPayload, expectedPlanPriceCents } from './billing-domain.js';
 import { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS } from './billing-domain.js';
+import { asaasCheckoutAvailable } from './public-config.js';
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -50,6 +51,9 @@ export function billingConfig() {
   }
   if (!['sandbox', 'production'].includes(environment)) {
     throw new HttpError(503, 'ASAAS_ENVIRONMENT deve ser sandbox ou production.');
+  }
+  if (!asaasCheckoutAvailable(process.env)) {
+    throw new HttpError(503, 'O checkout está pausado na produção até a configuração da conta Asaas de produção.');
   }
   try {
     const app = new URL(appUrl);

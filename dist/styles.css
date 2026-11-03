@@ -509,6 +509,8 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .billing-summary-grid dt { color: var(--muted); font-size: .68rem; }
 .billing-summary-grid dd { margin: 4px 0 0; color: var(--ink); font-size: .8rem; font-weight: 750; overflow-wrap: anywhere; }
 .billing-plan-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.billing-plan-options[hidden], [data-billing-plan][hidden] { display: none !important; }
+.billing-plan-options[hidden], [data-billing-plan][hidden] { display: none !important; }
 .billing-plan-card { display: grid; align-content: start; gap: 7px; padding: 14px; border: 1px solid #d5e4ed; border-radius: 12px; background: #fff; }
 .billing-plan-card strong { color: var(--ink); font-size: 1.05rem; }
 .billing-plan-card p { min-height: 2.8em; margin: 0 0 4px; color: var(--muted); font-size: .76rem; line-height: 1.45; }

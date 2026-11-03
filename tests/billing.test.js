@@ -21,6 +21,8 @@ const migration = await readFile(new URL('../supabase/migrations/20261031120000_
 const checkoutHandler = await readFile(new URL('../api/asaas/checkout.js', import.meta.url), 'utf8');
 const webhookHandler = await readFile(new URL('../api/asaas/webhook.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');
+const appMarkup = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
+const appStyles = await readFile(new URL('../dist/styles.css', import.meta.url), 'utf8');
 const paymentLinksAndLockoutMigration = await readFile(new URL('../supabase/migrations/20261103000000_billing_payment_links_and_login_lockout.sql', import.meta.url), 'utf8');
 const permanentFreeAccountsMigration = await readFile(new URL('../supabase/migrations/20261103010000_permanent_free_accounts.sql', import.meta.url), 'utf8');
 
@@ -293,6 +295,15 @@ test('sign-in and session restore refresh payment button availability', () => {
   assert.notEqual(saveSessionStart, -1);
   assert.match(saveSessionSource, /updateConnectionStatus\(\)/);
   assert.match(appSource, /querySelectorAll\('\[data-billing-plan\], #billing-start-trial-button'\)[\s\S]*button\.disabled = !online \|\| !cloudSession\?\.access_token/);
+});
+
+test('Sandbox production gate hides payment plans while keeping the free trial control', () => {
+  assert.match(appSource, /function isBillingCheckoutEnabled\(\)[\s\S]*billingCheckoutEnabled !== false/);
+  assert.match(appSource, /gatePlans\.hidden = !isBillingCheckoutEnabled\(\)/);
+  assert.match(appSource, /if \(!isBillingCheckoutEnabled\(\)\)[\s\S]*Checkout indisponível porque o ambiente Asaas não corresponde/);
+  assert.match(appMarkup, /id="billing-start-trial-button"/);
+  assert.match(appMarkup, /id="billing-gate-checkout-notice"/);
+  assert.match(appStyles, /\.billing-plan-options\[hidden\], \[data-billing-plan\]\[hidden\] \{ display: none !important; \}/);
 });
 
 test('trial RPC only starts for an authenticated workspace owner and grants fifteen days once', () => {

@@ -1,12 +1,12 @@
-const CACHE_NAME = 'grafiflow-static-v47';
+const CACHE_NAME = 'grafiflow-static-v48';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20261103-payment-methods',
-  './app.js?v=20261103-payment-methods',
+  './styles.css?v=20261103-payment-sandbox-guard',
+  './app.js?v=20261103-payment-sandbox-guard',
   './offline-billing.js',
-  './api/config?v=20261103-payment-methods',
-  './manifest.webmanifest?v=20261103-payment-methods',
+  './api/config?v=20261103-payment-sandbox-guard',
+  './manifest.webmanifest?v=20261103-payment-sandbox-guard',
   './grafiflow-favicon-v3.png',
   './grafiflow-logo.jpg',
   './login-print-roll-v1.png',

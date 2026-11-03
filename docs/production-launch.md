@@ -34,6 +34,8 @@ Use somente usuários de teste que não tenham isenção permanente. Não use a 
 
 Configure os valores privados apenas em **Production**. Configure Preview separadamente e conecte-o somente ao Supabase e Asaas Sandbox de homologação.
 
+O backend e a interface agora recusam combinações cruzadas: Production exige `ASAAS_ENVIRONMENT=production`, enquanto Preview/Development aceitam apenas Sandbox. Se a Vercel não fornecer o contexto do deployment, o checkout é bloqueado por segurança. Isso não substitui a configuração das credenciais e do webhook reais.
+
 - `GRAFIFLOW_SUPABASE_URL`: URL do projeto Supabase de produção.
 - `GRAFIFLOW_SUPABASE_ANON_KEY`: chave pública do Supabase; é a única chave Supabase adequada ao navegador.
 - `GRAFIFLOW_SUPABASE_SECRET_KEY`: chave secreta apenas no servidor Vercel; nunca exponha no bundle do site.

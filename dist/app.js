@@ -683,6 +683,10 @@ function isBillingEnabled() {
   return Boolean(window.GRAFIFLOW_CONFIG?.billingEnabled);
 }
 
+function isBillingCheckoutEnabled() {
+  return isBillingEnabled() && window.GRAFIFLOW_CONFIG?.billingCheckoutEnabled !== false;
+}
+
 function billingCacheKey() {
   return `${BILLING_CACHE_KEY}:${cloudWorkspaceId || cloudSession?.user?.id || 'unknown'}`;
 }
@@ -823,9 +827,13 @@ function applyBillingEntitlement(entitlement, periods = billingHistory, { persis
   const title = document.getElementById('billing-gate-title');
   const copy = document.getElementById('billing-gate-copy');
   const status = document.getElementById('billing-gate-status');
+  const gateCheckoutNotice = document.getElementById('billing-gate-checkout-notice');
+  const gatePlans = document.getElementById('billing-gate-plans');
   const trialButton = document.getElementById('billing-start-trial-button');
   const trialNote = document.getElementById('billing-trial-note');
   const startTrialAvailable = entitlement.state === 'trial_not_started' && !entitlement.trial_used && !entitlement.legacy_access;
+  if (gatePlans) gatePlans.hidden = !isBillingCheckoutEnabled();
+  if (gateCheckoutNotice) gateCheckoutNotice.hidden = isBillingCheckoutEnabled();
   if (title) {
     const titles = {
       trial_not_started: 'Experimente gratuitamente por 15 dias',
@@ -911,6 +919,11 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
 
   panel.hidden = !isBillingEnabled();
   if (panel.hidden) return;
+  const checkoutAvailable = isBillingCheckoutEnabled();
+  const planOptions = document.getElementById('billing-plan-options');
+  const checkoutNotice = document.getElementById('billing-checkout-notice');
+  if (planOptions) planOptions.hidden = !checkoutAvailable;
+  if (checkoutNotice) checkoutNotice.hidden = checkoutAvailable;
 
   const state = subscription?.state || 'trial_not_started';
   const paidCycles = Number(subscription?.paid_monthly_cycles || 0);
@@ -961,14 +974,14 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
   if (lastPaymentLabel) lastPaymentLabel.textContent = formatBillingDate(subscription?.last_payment_at, true);
 
   button.disabled = !navigator.onLine || !cloudSession?.access_token || Boolean(button.dataset.pending);
-  button.hidden = Boolean(subscription?.legacy_access);
+  button.hidden = Boolean(subscription?.legacy_access) || !checkoutAvailable;
   button.textContent = subscription?.plan_type === 'annual' && subscription?.access_allowed
     ? 'Mudar para mensal no próximo ciclo'
     : subscription?.provider_subscription_id && subscription?.plan_type === 'monthly'
       ? 'Pagar próxima mensalidade'
       : 'Assinar plano mensal';
   annualButton.disabled = !navigator.onLine || !cloudSession?.access_token || Boolean(annualButton.dataset.pending);
-  annualButton.hidden = Boolean(subscription?.legacy_access);
+  annualButton.hidden = Boolean(subscription?.legacy_access) || !checkoutAvailable;
   annualButton.textContent = subscription?.plan_type === 'annual' && subscription?.access_allowed
     ? 'Renovar plano anual'
     : subscription?.plan_type === 'monthly' && subscription?.access_allowed
@@ -985,7 +998,7 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
     if (parsed.protocol === 'https:' && (parsed.hostname === 'asaas.com' || parsed.hostname.endsWith('.asaas.com'))) safePaymentUrl = parsed.toString();
   } catch { /* link ausente ou inválido */ }
   if (advanceBox && advanceButton) {
-    advanceBox.hidden = !safePaymentUrl;
+    advanceBox.hidden = !checkoutAvailable || !safePaymentUrl;
     if (safePaymentUrl) {
       advanceTitle.textContent = subscription?.next_payment_status === 'paid' ? 'Próximo período pago' : 'Próxima cobrança disponível';
       advanceCopy.textContent = `${formatBillingMoney(subscription?.next_payment_amount_cents)} · vencimento ${formatBillingDate(subscription?.next_payment_due_at)}. A cobrança antecipada é a mesma registrada no Asaas.`;
@@ -1068,6 +1081,14 @@ async function startGrafiflowTrial() {
 
 async function startAsaasCheckout(planType = 'monthly', sourceButton = null) {
   if (!isBillingEnabled()) return;
+  if (!isBillingCheckoutEnabled()) {
+    const message = 'Checkout indisponível porque o ambiente Asaas não corresponde a este deployment. Use Sandbox em Preview e credenciais de produção somente em Production. O teste grátis continua funcionando.';
+    setBillingFeedback(message, true);
+    const gateStatus = document.getElementById('billing-gate-status');
+    if (gateStatus) { gateStatus.hidden = false; gateStatus.textContent = message; }
+    if (sourceButton) sourceButton.focus();
+    return;
+  }
   const buttons = [...document.querySelectorAll('[data-billing-plan]')];
   buttons.forEach((button) => { button.disabled = true; button.dataset.pending = 'true'; });
   setBillingFeedback('Preparando o checkout seguro do Asaas...');
@@ -4750,7 +4771,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261103-payment-methods').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261103-payment-sandbox-guard').catch(() => undefined);
 }
 
 initialize();

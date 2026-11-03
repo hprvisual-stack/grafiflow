@@ -8,7 +8,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20261101-billing-runtime-config" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261103-payment-methods" />
+    <link rel="stylesheet" href="./styles.css?v=20261103-payment-sandbox-guard" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -294,7 +294,7 @@
               <div><dt>Próximo vencimento</dt><dd id="billing-due-label">—</dd></div>
               <div><dt>Último pagamento</dt><dd id="billing-last-payment-label">—</dd></div>
             </dl>
-            <div class="billing-plan-options">
+            <div id="billing-plan-options" class="billing-plan-options">
               <article class="billing-plan-card">
                 <span class="section-kicker">PLANO MENSAL</span>
                 <strong>R$ 35,00/mês</strong>
@@ -312,6 +312,7 @@
               <div><strong id="billing-advance-title">Próxima cobrança</strong><p id="billing-advance-copy"></p></div>
               <a id="billing-advance-button" class="secondary-button" href="#" target="_blank" rel="noopener noreferrer">Pagar antecipadamente</a>
             </div>
+            <p id="billing-checkout-notice" class="billing-price-note" aria-live="polite" hidden>Checkout indisponível porque o ambiente Asaas não corresponde a este deployment. Use Sandbox em Preview e credenciais de produção somente em Production. A consulta da assinatura continua funcionando.</p>
             <section class="billing-history" aria-labelledby="billing-history-title">
               <h4 id="billing-history-title">Histórico financeiro</h4>
               <div id="billing-history-list" class="billing-history-list"><p class="billing-history-empty">Nenhum pagamento registrado.</p></div>
@@ -375,9 +376,10 @@
         <h2 id="billing-gate-title">Experimente gratuitamente por 15 dias</h2>
         <p id="billing-gate-copy">Aproveite todas as funcionalidades do sistema gratuitamente durante 15 dias. Explore os recursos antes de decidir assinar.</p>
         <p id="billing-gate-status" class="billing-gate-status" aria-live="polite" hidden></p>
+        <p id="billing-gate-checkout-notice" class="billing-gate-status" aria-live="polite" hidden>Checkout indisponível porque o ambiente Asaas não corresponde a este deployment. Use Sandbox em Preview e credenciais de produção somente em Production. O teste grátis continua funcionando.</p>
         <button id="billing-start-trial-button" class="primary-button billing-start-trial" type="button">Inicie seu teste grátis de 15 dias</button>
         <p id="billing-trial-note" class="billing-trial-note">Seu teste começa apenas quando você clicar no botão.</p>
-        <div class="billing-plan-options billing-gate-plans">
+        <div id="billing-gate-plans" class="billing-plan-options billing-gate-plans">
           <article class="billing-plan-card">
             <span class="section-kicker">PLANO MENSAL</span><strong>R$ 35,00/mês</strong>
             <p>Cobrança mensal recorrente. No link seguro do Asaas, escolha cartão, Pix ou boleto conforme as opções disponíveis. R$ 35,00 nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
@@ -412,7 +414,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./api/config?v=20261103-payment-methods"></script>
-    <script type="module" src="./app.js?v=20261103-payment-methods"></script>
+    <script src="./api/config?v=20261103-payment-sandbox-guard"></script>
+    <script type="module" src="./app.js?v=20261103-payment-sandbox-guard"></script>
   </body>
 </html>
