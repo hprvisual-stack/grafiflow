@@ -114,7 +114,7 @@ const scenarios = [
     assert.match(permanentFreeAccountsMigration, /grant execute on function public\.is_grafiflow_permanent_free_account\(uuid\) to service_role/);
     assert.match(permanentFreeAccountsMigration, /private\.grafiflow_is_permanent_free_account\(\)/);
     assert.doesNotMatch(permanentFreeAccountsMigration, /hprvisual@gmail\.com/i);
-    assert.match(appSource, /acesso gratuito permanente ao GrafiFlow/i);
+    assert.match(appSource, /acesso gratuito permanente ao MetriFlow/i);
     assert.match(checkoutHandler, /isPermanentFreeAccount\(user, config\)/);
   }],
   ['32 an open client session transitions to blocked after the server period and grace end', () => {

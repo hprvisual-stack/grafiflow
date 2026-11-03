@@ -30,7 +30,7 @@ export function errorResponse(error) {
 
 export function billingConfig() {
   if (process.env.GRAFIFLOW_BILLING_ENABLED !== 'true') {
-    throw new HttpError(503, 'A cobrança do GrafiFlow ainda não está ativada.');
+    throw new HttpError(503, 'A cobrança do MetriFlow ainda não está ativada.');
   }
 
   const supabaseUrl = String(process.env.GRAFIFLOW_SUPABASE_URL || '').replace(/\/$/, '');
@@ -115,7 +115,7 @@ export function assertSameOrigin(request, config) {
 export function bearerToken(request) {
   const authorization = request.headers.get('authorization') || '';
   const match = authorization.match(/^Bearer\s+([^\s]+)$/i);
-  if (!match || match[1].length > 8192) throw new HttpError(401, 'Entre na sua conta GrafiFlow para continuar.');
+  if (!match || match[1].length > 8192) throw new HttpError(401, 'Entre na sua conta MetriFlow para continuar.');
   return match[1];
 }
 
@@ -221,7 +221,7 @@ export async function callAsaas(path, { config, method = 'GET', body } = {}) {
       access_token: config.asaasApiKey,
       accept: 'application/json',
       'content-type': 'application/json',
-      'user-agent': 'GrafiFlow/1.0',
+      'user-agent': 'MetriFlow/1.0',
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: requestSignal(config, 18000),

@@ -1,4 +1,4 @@
-# GrafiFlow
+# MetriFlow
 
 Aplicativo web progressivo para orçamento e aproveitamento de bobinas e chapas. A aplicação continua funcionando offline no Windows e no Android; os dados locais são mantidos no IndexedDB e podem ser exportados em backup.
 
@@ -8,7 +8,7 @@ Aplicativo web progressivo para orçamento e aproveitamento de bobinas e chapas.
 - **Vercel:** publicação do app estático/PWA.
 - **Supabase:** autenticação por e-mail, espaços de trabalho, sincronização entre dispositivos, RLS e estrutura inicial de assinaturas.
 
-O núcleo de cálculo não depende de conexão. A nuvem é uma camada opcional: quando o usuário entra e há internet, o GrafiFlow sincroniza rascunho, catálogo e orçamentos; alterações offline entram em uma fila local e são enviadas ao reconectar.
+O núcleo de cálculo não depende de conexão. A nuvem é uma camada opcional: quando o usuário entra e há internet, o MetriFlow sincroniza rascunho, catálogo e orçamentos; alterações offline entram em uma fila local e são enviadas ao reconectar.
 
 ## Publicação na Vercel
 
@@ -28,7 +28,7 @@ Configure `https://grafiflow.vercel.app` como Site URL e permita essa origem nas
 
 Antes de abrir cadastros ao público, configure SMTP transacional próprio, confirme os links de confirmação e recuperação no domínio publicado e mantenha templates sem rastreamento de links que possa alterar as URLs do Supabase. O projeto Free não oferece backup diário para download e pode ser pausado por inatividade; use um plano com backup automático ou configure exportações regulares fora do Supabase.
 
-Ao informar um CEP completo em Minha conta, o GrafiFlow consulta o ViaCEP e sugere rua, bairro, cidade e UF. Só o CEP é enviado ao serviço; número e complemento continuam sendo preenchidos pelo usuário, e os demais campos podem ser editados.
+Ao informar um CEP completo em Minha conta, o MetriFlow consulta o ViaCEP e sugere rua, bairro, cidade e UF. Só o CEP é enviado ao serviço; número e complemento continuam sendo preenchidos pelo usuário, e os demais campos podem ser editados.
 
 ## Configuração inicial das plataformas
 
@@ -36,9 +36,9 @@ Ao informar um CEP completo em Minha conta, o GrafiFlow consulta o ViaCEP e suge
 2. No Supabase, crie um projeto e execute o SQL da migração acima. Copie a Project URL e a chave pública `anon`/publishable.
 3. Na Vercel, importe o repositório do GitHub. O projeto já define `npm run build` e a pasta `build` como saída.
 4. Nas variáveis de ambiente da Vercel, defina `GRAFIFLOW_SUPABASE_URL` e `GRAFIFLOW_SUPABASE_ANON_KEY` e publique novamente. A rota `/api/config` entrega essas configurações públicas em runtime.
-5. Abra o endereço publicado, crie uma conta GrafiFlow e teste cadastro, sincronização entre dois dispositivos e uso offline.
+5. Abra o endereço publicado, crie uma conta MetriFlow e teste cadastro, sincronização entre dois dispositivos e uso offline.
 
-Os dados locais do site antigo pertencem à origem antiga do navegador. Exporte um backup nele e importe no novo GrafiFlow para levar catálogo e orçamentos; a primeira sincronização enviará os dados importados à conta conectada.
+Os dados locais do site antigo pertencem à origem antiga do navegador. Exporte um backup nele e importe no novo MetriFlow para levar catálogo e orçamentos; a primeira sincronização enviará os dados importados à conta conectada.
 
 ## Assinatura Asaas
 
@@ -63,7 +63,7 @@ Configure estas variáveis privadas no projeto Vercel:
 - `ASAAS_WEBHOOK_AUTH_TOKEN`: token aleatório com pelo menos 32 caracteres, diferente da chave de API.
 - `ASAAS_ENVIRONMENT`: `sandbox` para homologação; use `production` somente depois dos testes.
 - `GRAFIFLOW_BILLING_ENABLED`: mantenha `false` até concluir banco, chaves e webhook; então publique como `true`.
-- `GRAFIFLOW_APP_URL`: endereço HTTPS do GrafiFlow, por padrão `https://grafiflow.vercel.app`.
+- `GRAFIFLOW_APP_URL`: endereço HTTPS do MetriFlow, por padrão `https://grafiflow.vercel.app`.
 - `GRAFIFLOW_ALLOWED_ORIGINS`: opcional, origens HTTPS adicionais separadas por vírgula.
 
 No painel Asaas do mesmo ambiente, cadastre o webhook em `https://grafiflow.vercel.app/api/asaas/webhook` para produção ou no deployment isolado de Preview para homologação. Use o mesmo `ASAAS_WEBHOOK_AUTH_TOKEN` configurado no ambiente Vercel, habilite entrega sequencial e selecione `CHECKOUT_CREATED`, `CHECKOUT_PAID`, `CHECKOUT_CANCELED`, `CHECKOUT_EXPIRED`, `SUBSCRIPTION_CREATED`, `SUBSCRIPTION_UPDATED`, `SUBSCRIPTION_INACTIVATED`, `SUBSCRIPTION_DELETED`, `PAYMENT_CREATED`, `PAYMENT_UPDATED`, `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`, `PAYMENT_OVERDUE`, `PAYMENT_REFUNDED`, `PAYMENT_PARTIALLY_REFUNDED`, `PAYMENT_RECEIVED_IN_CASH_UNDONE`, `PAYMENT_CHARGEBACK_REQUESTED` e `PAYMENT_CHARGEBACK_DISPUTE`. `PAYMENT_CREATED` registra a cobrança recorrente existente e o link para antecipá-la; `PAYMENT_UPDATED` mantém o valor local alinhado quando o Asaas atualiza cobranças futuras na mudança para R$ 50. A aplicação não cria uma segunda cobrança para o mesmo ciclo. Eventos são idempotentes pelo identificador fornecido pelo Asaas. Se a atualização automática de R$ 35 para R$ 50 falhar, o endpoint responde erro para o Asaas reenviar o evento.

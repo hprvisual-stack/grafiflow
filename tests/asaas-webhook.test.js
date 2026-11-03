@@ -63,7 +63,7 @@ test('Asaas webhook forwards authenticated events to the billing RPC', async () 
   });
 });
 
-test('webhook disables only a GrafiFlow-registered payment link before reconciliation', async () => {
+test('webhook disables only a MetriFlow-registered payment link before reconciliation', async () => {
   const calls = [];
   await withWebhookEnvironment(async (url, options = {}) => {
     const call = { url: String(url), options, body: options.body ? JSON.parse(options.body) : undefined };

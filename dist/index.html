@@ -6,22 +6,22 @@
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
     <link rel="manifest" href="./manifest.webmanifest?v=20261101-billing-runtime-config" />
-    <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
-    <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261103-payment-sandbox-guard" />
-    <title>GrafiFlow — orçamento gráfico</title>
+    <link rel="icon" href="./metriflow-favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="./metriflow-icon-192.png" />
+    <link rel="stylesheet" href="./styles.css?v=20261103-metriflow-rebrand" />
+    <title>MetriFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
     <div class="auth-bootstrap" id="auth-bootstrap-screen" aria-live="polite">
-      <div class="auth-bootstrap-brand"><img src="./grafiflow-icon-192-v3.png" alt="" /><span>GrafiFlow</span></div>
+      <div class="auth-bootstrap-brand"><img src="./metriflow-icon-192.png" alt="" /><span>MetriFlow</span></div>
       <div class="auth-loader" aria-hidden="true"></div>
       <p>Preparando seu espaço...</p>
     </div>
     <div class="app-shell" hidden>
       <aside class="sidebar" aria-label="Navegação principal">
         <div class="brand">
-          <img class="brand-logo-full" src="./grafiflow-logo.jpg" alt="GrafiFlow" />
-          <img class="brand-logo" src="./grafiflow-icon-192-v3.png" alt="GrafiFlow" />
+          <img class="brand-logo-full" src="./metriflow-logo.png" alt="MetriFlow" />
+          <img class="brand-logo" src="./metriflow-icon-192.png" alt="MetriFlow" />
         </div>
 
         <nav class="main-nav">
@@ -56,8 +56,8 @@
       <main class="main-content">
         <header class="topbar">
           <div class="mobile-brand">
-            <img class="brand-logo" src="./grafiflow-icon-192-v3.png" alt="GrafiFlow" />
-            <span>GrafiFlow</span>
+            <img class="brand-logo" src="./metriflow-icon-192.png" alt="MetriFlow" />
+            <span>MetriFlow</span>
           </div>
           <div class="page-heading">
             <span class="eyebrow" id="page-eyebrow">OFICINA / PRODUÇÃO</span>
@@ -82,7 +82,7 @@
               <div>
                 <p class="section-kicker">APROVEITAMENTO RETANGULAR</p>
                 <h2 id="calculator-heading">Monte o orçamento e veja o encaixe</h2>
-                <p class="muted-copy">Informe a bobina ou as dimensões da chapa e as peças. O GrafiFlow procura o melhor encaixe.</p>
+                <p class="muted-copy">Informe a bobina ou as dimensões da chapa e as peças. O MetriFlow procura o melhor encaixe.</p>
               </div>
               <div class="quote-name-wrap">
                 <label for="quote-name">Nome do orçamento</label>
@@ -203,7 +203,7 @@
           </section>
 
           <section class="view" id="quotes-view" aria-labelledby="quotes-heading">
-            <div class="view-header"><div><p class="section-kicker">HISTÓRICO</p><h2 id="quotes-heading">Orçamentos salvos</h2><p class="muted-copy">Acompanhe valores, lucros e aprovações. Entre na mesma conta GrafiFlow para sincronizar entre dispositivos.</p></div><button class="primary-button" id="quotes-new-button" type="button">+ Novo orçamento</button></div>
+            <div class="view-header"><div><p class="section-kicker">HISTÓRICO</p><h2 id="quotes-heading">Orçamentos salvos</h2><p class="muted-copy">Acompanhe valores, lucros e aprovações. Entre na mesma conta MetriFlow para sincronizar entre dispositivos.</p></div><button class="primary-button" id="quotes-new-button" type="button">+ Novo orçamento</button></div>
             <div id="quotes-list" class="quotes-list"></div>
           </section>
 
@@ -217,15 +217,15 @@
           </section>
 
           <section class="view" id="materials-view" aria-labelledby="materials-heading">
-            <div class="view-header"><div><p class="section-kicker">CATÁLOGO</p><h2 id="materials-heading">Materiais e mídias</h2><p class="muted-copy">Cadastre bobinas e chapas para reutilizar dimensões e preços nos cálculos. Entre na mesma conta GrafiFlow para sincronizar o catálogo com o PWA.</p></div><button class="primary-button" id="materials-new-button" type="button">+ Novo material</button></div>
+            <div class="view-header"><div><p class="section-kicker">CATÁLOGO</p><h2 id="materials-heading">Materiais e mídias</h2><p class="muted-copy">Cadastre bobinas e chapas para reutilizar dimensões e preços nos cálculos. Entre na mesma conta MetriFlow para sincronizar o catálogo com o PWA.</p></div><button class="primary-button" id="materials-new-button" type="button">+ Novo material</button></div>
             <div class="materials-layout"><section class="panel" id="saved-material-form-panel"><div class="panel-heading"><div><span class="section-kicker">MATERIAL BASE</span><h3 id="saved-material-form-title">Novo material base</h3><p class="muted-copy">Bobina: por metro linear ou m². Chapa: por chapa ou m². Impressão terceirizada: por m².</p></div></div><form id="saved-material-form" class="form-grid two-columns"><input id="saved-material-id" type="hidden" /><label class="field full-width"><span>Descrição</span><input id="saved-material-name" required type="text" placeholder="Ex.: Lona 440 g" /></label><label class="field full-width"><span>Fornecedor <small>(opcional)</small></span><input id="saved-material-supplier" type="text" placeholder="Ex.: Serilon, Alltak ou fornecedor local" /></label><label class="field full-width"><span>Modo de cálculo</span><select id="saved-material-calculation-mode"><option value="roll">Bobina — aproveitamento por metro linear</option><option value="sheet">Chapa — aproveitamento por chapa ou m²</option><option value="area">Impressão terceirizada — cobrança por m²</option></select></label><label class="field"><span><span id="saved-material-width-label">Largura da bobina</span> <small>(cm)</small></span><input id="saved-material-width" required type="number" min="1" step="0.1" placeholder="320" /></label><label class="field" id="saved-material-height-field" hidden><span>Altura da chapa <small>(cm)</small></span><input id="saved-material-height" type="number" min="1" step="0.1" placeholder="244" disabled /></label><label class="field"><span id="saved-material-price-label">Preço base (R$/metro linear)</span><input id="saved-material-price" required type="number" min="0" step="0.01" placeholder="0,00" /></label><label class="field"><span>Cobrança</span><select id="saved-material-basis"><option value="linear">por metro linear</option><option value="m2">por m²</option><option value="sheet" disabled>por chapa</option></select></label><label class="field"><span>Espaço entre peças <small>(mm)</small></span><input id="saved-material-gap" type="number" min="0" step="0.1" value="2" /></label><label class="field full-width"><span><input id="saved-material-rotate" type="checkbox" checked /> Permitir giro automático das peças</span></label><div class="volume-pricing-box full-width"><div class="volume-pricing-heading"><div><span class="section-kicker">PREÇO POR VOLUME</span><strong>Redução conforme a quantidade</strong><p>Cadastre faixas para reduzir o valor unitário de impressões maiores.</p></div><button class="secondary-button small-button" id="add-saved-material-tier" data-action="add-saved-material-tier" type="button">+ Faixa</button></div><div id="saved-material-volume-tiers" class="volume-pricing-list"></div><p class="material-note volume-pricing-note">A maior faixa alcançada será aplicada ao total calculado do material. Deixe vazio se não houver condição por volume.</p></div><div class="form-actions full-width"><button class="secondary-button" id="cancel-saved-material" type="button">Limpar</button><button class="primary-button" type="submit">Salvar material</button></div></form></section><section class="panel"><div class="panel-heading"><div><span class="section-kicker">CATÁLOGO</span><h3>Materiais base salvos</h3></div></div><div id="saved-materials-list" class="saved-materials-list"></div></section></div>
             <section class="panel catalog-extras-panel"><div class="panel-heading"><div><span class="section-kicker">CATÁLOGO DE CUSTOS</span><h3>Acabamentos, insumos, mão de obra e extras</h3><p class="muted-copy">Cada categoria recebe um tipo próprio na sincronização. Defina se o preço é por unidade, metro linear, m², chapa, hora ou valor fixo.</p></div></div><form id="catalog-item-form" class="form-grid three-columns"><input id="catalog-item-id" type="hidden" /><label class="field"><span>Categoria</span><select id="catalog-item-category" required><option value="finish">Acabamento</option><option value="supply">Insumo</option><option value="labor">Mão de obra</option><option value="extra">Extra</option></select></label><label class="field"><span>Descrição</span><input id="catalog-item-name" required type="text" maxlength="160" placeholder="Ex.: Laminação fosca" /></label><label class="field"><span>Base de cobrança</span><select id="catalog-item-basis" required><option value="unit">por unidade</option><option value="linear">por metro linear</option><option value="m2">por m²</option><option value="sheet">por chapa</option><option value="hour">por hora</option><option value="fixed">valor fixo</option></select></label><label class="field"><span>Unidade personalizada</span><input id="catalog-item-unit" required type="text" maxlength="24" value="un" placeholder="un, peça, kit" /></label><label class="field"><span>Preço da base (R$)</span><input id="catalog-item-price" required type="number" min="0" step="0.01" value="0" /></label><label class="field full-width"><span>Observação <small>(opcional)</small></span><input id="catalog-item-notes" type="text" maxlength="240" placeholder="Detalhes para identificar este item" /></label><div class="form-actions full-width"><button class="secondary-button" id="cancel-catalog-item" type="button">Limpar</button><button class="primary-button" type="submit">Salvar item</button></div></form><div id="catalog-items-list" class="saved-materials-list"></div></section>
           </section>
 
           <section class="view" id="help-view" aria-labelledby="help-heading">
-            <div class="view-header"><div><p class="section-kicker">GUIA RÁPIDO</p><h2 id="help-heading">Como usar o GrafiFlow</h2><p class="muted-copy">Uma sequência curta para sair da medida e chegar ao preço de venda.</p></div></div>
+            <div class="view-header"><div><p class="section-kicker">GUIA RÁPIDO</p><h2 id="help-heading">Como usar o MetriFlow</h2><p class="muted-copy">Uma sequência curta para sair da medida e chegar ao preço de venda.</p></div></div>
             <div class="help-grid"><article class="help-card"><span class="help-number">01</span><h3>Escolha o material</h3><p>Cadastre uma vez no catálogo e, no orçamento, clique em “Puxar produto do catálogo” para substituir o material principal. Use “+ Novo material” para adicionar outra mídia. Largura, preço, cobrança e condições por volume são preenchidos automaticamente.</p></article><article class="help-card"><span class="help-number">02</span><h3>Adicione as peças</h3><p>Digite largura, altura e quantidade. O sistema poderá girar cada retângulo para procurar um encaixe melhor.</p></article><article class="help-card"><span class="help-number">03</span><h3>Leia o mapa de corte</h3><p>O desenho mostra o encaixe nas bobinas ou em cada chapa. Quando houver laminação, o sistema recalcula o aproveitamento com as dimensões próprias do material escolhido.</p></article><article class="help-card"><span class="help-number">04</span><h3>Complete o orçamento</h3><p>Adicione instalação, insumos, preço de venda e margem. Depois salve ou imprima em PDF.</p></article></div>
-            <section class="panel install-guide-panel"><span class="section-kicker">VERSÃO INSTALÁVEL</span><h3>Use o GrafiFlow como aplicativo</h3><p class="muted-copy">No Android e no Windows, instale o GrafiFlow pelo navegador para abrir em uma janela própria e continuar usando seus dados mesmo sem internet.</p><div class="install-guide-grid"><div><strong>Android</strong><span>Use o botão “Instalar aplicativo” ou o menu do navegador → “Adicionar à tela inicial”.</span></div><div><strong>Windows</strong><span>No Chrome ou Edge, use o botão de instalação na barra de endereço ou o botão “Instalar aplicativo”.</span></div></div><p class="material-note">Se o app antigo ainda aparecer como Nesto, exporte um backup, remova essa instalação e instale o GrafiFlow novamente pelo navegador.</p><button class="secondary-button" id="help-install-button" type="button" hidden>Instalar aplicativo</button></section>
+            <section class="panel install-guide-panel"><span class="section-kicker">VERSÃO INSTALÁVEL</span><h3>Use o MetriFlow como aplicativo</h3><p class="muted-copy">No Android e no Windows, instale o MetriFlow pelo navegador para abrir em uma janela própria e continuar usando seus dados mesmo sem internet.</p><div class="install-guide-grid"><div><strong>Android</strong><span>Use o botão “Instalar aplicativo” ou o menu do navegador → “Adicionar à tela inicial”.</span></div><div><strong>Windows</strong><span>No Chrome ou Edge, use o botão de instalação na barra de endereço ou o botão “Instalar aplicativo”.</span></div></div><p class="material-note">Se o app antigo ainda aparecer como Nesto, exporte um backup, remova essa instalação e instale o MetriFlow novamente pelo navegador.</p><button class="secondary-button" id="help-install-button" type="button" hidden>Instalar aplicativo</button></section>
             <section class="panel formula-panel"><span class="section-kicker">FÓRMULAS USADAS</span><div class="formula-row"><span>Área comprada</span><strong>bobina: largura × comprimento; chapa: largura × altura × quantidade</strong></div><div class="formula-row"><span>Desperdício</span><strong>área comprada − área das peças</strong></div><div class="formula-row"><span>Lucro</span><strong>preço de venda − custo total</strong></div><div class="formula-row"><span>Preço com margem</span><strong>custo total ÷ (1 − margem desejada)</strong></div></section>
           </section>
         </div>
@@ -234,20 +234,20 @@
 
     <div class="modal-backdrop account-modal" id="account-modal" hidden>
       <div class="account-access-layout" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
-        <aside class="auth-brand-panel" aria-label="Sobre o GrafiFlow">
-          <img class="auth-brand-logo" src="./grafiflow-logo.jpg" alt="GrafiFlow" />
+        <aside class="auth-brand-panel" aria-label="Sobre o MetriFlow">
+          <img class="auth-brand-logo" src="./metriflow-logo.png" alt="MetriFlow" />
           <div class="auth-brand-copy">
             <h1>Seus orçamentos,<br />em um fluxo mais claro.</h1>
             <p>Calcule materiais, organize custos e gere propostas em um só lugar.</p>
           </div>
           <img class="auth-print-visual" src="./login-print-roll-v1.png" alt="" aria-hidden="true" />
-          <p class="auth-brand-footer">GrafiFlow · orçamento gráfico</p>
+          <p class="auth-brand-footer">MetriFlow · orçamento gráfico</p>
         </aside>
         <section class="auth-form-region" aria-labelledby="account-modal-title">
-          <div class="auth-mobile-brand"><img src="./grafiflow-icon-192-v3.png" alt="" /><span>GrafiFlow</span></div>
+          <div class="auth-mobile-brand"><img src="./metriflow-icon-192.png" alt="" /><span>MetriFlow</span></div>
           <div class="modal-card account-modal-card">
             <div class="modal-heading">
-              <div><h2 id="account-modal-title">Acesse o GrafiFlow</h2><p id="account-modal-status" class="muted-copy" aria-live="polite">Entre para continuar no seu espaço.</p></div>
+              <div><h2 id="account-modal-title">Acesse o MetriFlow</h2><p id="account-modal-status" class="muted-copy" aria-live="polite">Entre para continuar no seu espaço.</p></div>
               <button class="icon-button" id="close-account-modal" type="button" aria-label="Fechar">×</button>
             </div>
             <div id="auth-login-view">
@@ -257,11 +257,11 @@
                 <label class="field"><span>E-mail</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><input id="auth-email" type="email" autocomplete="username" required placeholder="voce@empresa.com" /></div></label>
                 <label class="field"><span>Senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg><input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="Sua senha" /><button class="password-visibility-toggle" type="button" data-password-target="auth-password" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
                 <label class="field" id="auth-password-confirm-field" hidden><span>Confirme sua senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="m9 15 2 2 4-4"></path></svg><input id="auth-password-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Digite a senha novamente" /><button class="password-visibility-toggle" type="button" data-password-target="auth-password-confirm" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
-                <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar no GrafiFlow</button>
+                <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar no MetriFlow</button>
               </form>
               <section id="account-mismatch-choice" class="account-mismatch-choice" aria-labelledby="account-mismatch-title" hidden>
                 <h3 id="account-mismatch-title">Mesclar dados deste tablet?</h3>
-                <p>Esta conta foi autenticada, mas os dados locais do tablet estão vinculados a outro usuário. Ao continuar, o GrafiFlow enviará o orçamento atual, materiais e catálogo, orçamentos salvos e alterações pendentes para esta conta. Registros diferentes que já existam na nuvem serão mantidos; conflitos serão guardados como cópias. A conta antiga na nuvem não será alterada.</p>
+                <p>Esta conta foi autenticada, mas os dados locais do tablet estão vinculados a outro usuário. Ao continuar, o MetriFlow enviará o orçamento atual, materiais e catálogo, orçamentos salvos e alterações pendentes para esta conta. Registros diferentes que já existam na nuvem serão mantidos; conflitos serão guardados como cópias. A conta antiga na nuvem não será alterada.</p>
                 <button class="primary-button account-submit" id="confirm-account-data-merge" type="button">Mesclar dados locais nesta conta</button>
                 <button class="text-button" id="cancel-account-data-merge" type="button">Cancelar e manter os dados neste tablet</button>
               </section>
@@ -286,7 +286,7 @@
             <section id="account-settings-view" class="account-settings-view" hidden>
           <p class="account-email-line">Conta: <strong id="account-email-display"></strong></p>
           <section id="billing-panel" class="billing-panel" aria-labelledby="billing-title" hidden>
-            <div class="billing-panel-heading"><div><span class="section-kicker">ASSINATURA</span><h3 id="billing-title">Plano GrafiFlow</h3></div><span id="billing-status-badge" class="billing-status-badge">Carregando</span></div>
+            <div class="billing-panel-heading"><div><span class="section-kicker">ASSINATURA</span><h3 id="billing-title">Plano MetriFlow</h3></div><span id="billing-status-badge" class="billing-status-badge">Carregando</span></div>
             <p id="billing-description" class="billing-description" aria-live="polite">Consultando sua assinatura...</p>
             <dl class="billing-summary-grid">
               <div><dt>Plano atual</dt><dd id="billing-current-plan">—</dd></div>
@@ -365,7 +365,7 @@
             </section>
             <div class="account-modal-actions account-close-actions"><button class="secondary-button" id="cancel-account-modal" type="button">Fechar</button></div>
             <nav class="auth-legal-links" aria-label="Documentos legais"><a href="/termos-de-uso/">Termos de uso</a><a href="/politica-de-privacidade/">Política de privacidade</a></nav>
-            <p class="account-offline-note">O GrafiFlow funciona offline. A sincronização acontece quando houver internet; seus dados locais e o backup continuam disponíveis.</p>
+            <p class="account-offline-note">O MetriFlow funciona offline. A sincronização acontece quando houver internet; seus dados locais e o backup continuam disponíveis.</p>
           </div>
         </section>
       </div>
@@ -414,7 +414,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./api/config?v=20261103-payment-sandbox-guard"></script>
-    <script type="module" src="./app.js?v=20261103-payment-sandbox-guard"></script>
+    <script src="./api/config?v=20261103-metriflow-rebrand"></script>
+    <script type="module" src="./app.js?v=20261103-metriflow-rebrand"></script>
   </body>
 </html>

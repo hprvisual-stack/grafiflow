@@ -55,7 +55,7 @@ export async function POST(request) {
     try { payload = JSON.parse(raw); } catch { return jsonResponse({ error: 'JSON inválido.' }, 400); }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return jsonResponse({ error: 'Evento inválido.' }, 400);
 
-    // Only disable Payment Links already registered by GrafiFlow. This prevents the same
+    // Only disable Payment Links already registered by MetriFlow. This prevents the same
     // recurring link from creating multiple subscriptions while leaving unrelated links alone.
     await disableRegisteredPaymentLink(payload, config);
 

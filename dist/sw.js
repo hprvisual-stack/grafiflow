@@ -1,19 +1,17 @@
-const CACHE_NAME = 'grafiflow-static-v48';
+const CACHE_NAME = 'grafiflow-static-v49';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20261103-payment-sandbox-guard',
-  './app.js?v=20261103-payment-sandbox-guard',
+  './styles.css?v=20261103-metriflow-rebrand',
+  './app.js?v=20261103-metriflow-rebrand',
   './offline-billing.js',
-  './api/config?v=20261103-payment-sandbox-guard',
-  './manifest.webmanifest?v=20261103-payment-sandbox-guard',
-  './grafiflow-favicon-v3.png',
-  './grafiflow-logo.jpg',
+  './api/config?v=20261103-metriflow-rebrand',
+  './manifest.webmanifest?v=20261103-metriflow-rebrand',
+  './metriflow-favicon.png',
+  './metriflow-logo.png',
   './login-print-roll-v1.png',
-  './grafiflow-icon-192-v3.png',
-  './grafiflow-icon-512-v3.png',
-  './grafiflow-icon-maskable-192-v3.png',
-  './grafiflow-icon-maskable-512-v3.png',
+  './metriflow-icon-192.png',
+  './metriflow-icon-512.png',
 ];
 const APP_SHELL_URLS = new Set(APP_SHELL.map((asset) => new URL(asset, self.location.href).href));
 

@@ -852,7 +852,7 @@ function applyBillingEntitlement(entitlement, periods = billingHistory, { persis
       payment_pending: 'O Asaas ainda não confirmou o pagamento. O acesso será liberado assim que a confirmação chegar.',
       offline_unknown: 'Conecte-se à internet para validar sua assinatura. Seus dados locais continuam preservados neste dispositivo.',
     };
-    copy.textContent = descriptions[entitlement.state] || 'Escolha uma forma de assinatura para retomar o acesso aos recursos do GrafiFlow.';
+    copy.textContent = descriptions[entitlement.state] || 'Escolha uma forma de assinatura para retomar o acesso aos recursos do MetriFlow.';
   }
   if (status) {
     const isVerifying = body.classList.contains('billing-verifying');
@@ -897,7 +897,7 @@ function billingReturnNotice() {
   const state = new URLSearchParams(window.location.search).get('asaas');
   if (state === 'success') return 'Checkout concluído. A assinatura será atualizada após a confirmação do Asaas.';
   if (state === 'cancel') return 'Checkout cancelado. Você pode retomá-lo nesta tela.';
-  if (state === 'expired') return 'Checkout expirado. Ao continuar, o GrafiFlow solicitará um novo checkout.';
+  if (state === 'expired') return 'Checkout expirado. Ao continuar, o MetriFlow solicitará um novo checkout.';
   return '';
 }
 
@@ -943,11 +943,11 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
 
   const descriptions = {
     legacy_access: subscription?.permanent_free
-      ? 'Esta conta tem acesso gratuito permanente ao GrafiFlow; não é necessário contratar um plano.'
+      ? 'Esta conta tem acesso gratuito permanente ao MetriFlow; não é necessário contratar um plano.'
       : 'Este espaço já existia antes da ativação da cobrança e mantém seu acesso e seus dados preservados.',
     trial_not_started: 'Seu teste começa quando você escolher “Inicie seu teste grátis de 15 dias”. A contratação de um plano também está disponível.',
     trial_active: `Teste gratuito ativo até ${formatBillingDate(subscription?.trial_ends_at, true)}. Depois, o acesso depende de uma assinatura confirmada.`,
-    trial_expired: 'O teste gratuito terminou. Para continuar usando o GrafiFlow, escolha um dos planos abaixo.',
+    trial_expired: 'O teste gratuito terminou. Para continuar usando o MetriFlow, escolha um dos planos abaixo.',
     subscription_active: subscription?.pending_plan_type
       ? `Período pago ativo até ${formatBillingDate(subscription.current_period_end, true)}. A mudança para o plano ${subscription.pending_plan_type === 'annual' ? 'anual' : 'mensal'} está programada para o próximo ciclo.`
       : subscription?.plan_type === 'annual'
@@ -1128,7 +1128,7 @@ function openBillingAccount() {
 }
 
 async function usableCloudSession() {
-  if (!cloudSession?.access_token) throw new Error('Entre na sua conta GrafiFlow para sincronizar.');
+  if (!cloudSession?.access_token) throw new Error('Entre na sua conta MetriFlow para sincronizar.');
   if (!navigator.onLine) return cloudSession;
   const expiresAt = Number(cloudSession.expires_at || 0) * 1000;
   if (expiresAt && expiresAt > Date.now() + 60_000) return cloudSession;
@@ -1770,7 +1770,7 @@ async function confirmLocalAccountMerge() {
   try {
     const currentOwner = localStorage.getItem(CLOUD_OWNER_KEY) || '';
     if (currentOwner !== pending.previousOwner) {
-      throw new Error('O vínculo local mudou desde o login. Feche e abra o GrafiFlow antes de tentar novamente.');
+      throw new Error('O vínculo local mudou desde o login. Feche e abra o MetriFlow antes de tentar novamente.');
     }
     const newOwner = pending.session.user?.id || '';
     if (!newOwner || newOwner === pending.previousOwner) throw new Error('Não foi possível validar o usuário da nova conta.');
@@ -1902,7 +1902,7 @@ function updateAccountStatus(message = '') {
   if (manualSync) manualSync.disabled = !configured || !navigator.onLine || cloudSyncRunning || fullSyncRunning;
   if (button) {
     button.textContent = signedIn ? 'Minha conta' : 'Entrar e sincronizar';
-    button.title = signedIn ? (cloudSession.user.email || cloudWorkspaceName || 'Conta GrafiFlow') : 'Entre para sincronizar seus dados entre dispositivos';
+    button.title = signedIn ? (cloudSession.user.email || cloudWorkspaceName || 'Conta MetriFlow') : 'Entre para sincronizar seus dados entre dispositivos';
   }
   if (status) {
     status.textContent = message || authNotice || (signedIn
@@ -1973,15 +1973,15 @@ function renderAuthMode() {
     passwordConfirm.required = creating;
   }
   updateAuthPasswordConfirmation();
-  if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar no GrafiFlow';
+  if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar no MetriFlow';
   if (toggle) toggle.textContent = creating ? 'Já tenho uma conta' : 'Criar conta';
   const accountSwitchPending = Boolean(pendingCloudAccountSwitch) && !cloudSession?.user;
   if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user) || accountSwitchPending;
   if (forgot) forgot.hidden = authMode !== 'login' || Boolean(cloudSession?.user) || accountSwitchPending;
   if (title) {
     const titles = {
-      login: 'Acesse o GrafiFlow',
-      signup: 'Crie sua conta GrafiFlow',
+      login: 'Acesse o MetriFlow',
+      signup: 'Crie sua conta MetriFlow',
       'recovery-request': 'Recuperar senha',
       'recovery-complete': 'Definir nova senha',
       account: 'Minha conta',
@@ -2128,7 +2128,7 @@ async function submitCloudAuth(event) {
       authMode = 'account';
       authNotice = '';
       setAuthAccessUI(true);
-      showToast('Conta GrafiFlow conectada.');
+      showToast('Conta MetriFlow conectada.');
     } else if (creating) {
       authNotice = 'Cadastro criado. Abra o e-mail e use o botão Confirmar cadastro. Depois, entre com sua senha.';
       authMode = 'login';
@@ -2340,7 +2340,7 @@ async function handleAuthCallback() {
     }
     authNotice = '';
     setAuthAccessUI(true);
-    showToast('E-mail confirmado. Sua conta GrafiFlow está pronta.');
+    showToast('E-mail confirmado. Sua conta MetriFlow está pronta.');
     return true;
   } catch (error) {
     authMode = 'login';
@@ -2559,7 +2559,7 @@ function renderInstallButton() {
 
 async function installApp() {
   if (!deferredInstallPrompt) {
-    showToast('Use o menu do navegador para adicionar o GrafiFlow à tela inicial.', 'error');
+    showToast('Use o menu do navegador para adicionar o MetriFlow à tela inicial.', 'error');
     return;
   }
   const promptEvent = deferredInstallPrompt;
@@ -2618,7 +2618,7 @@ function renderMaterialEditors() {
         </div>
         ${renderVolumePricingEditor(material)}
         ${isArea ? '<p class="material-note area-mode-note">Use este modo quando a gráfica cobrar diretamente por m². A largura e o comprimento não entram no cálculo.</p>' : ''}
-        ${isSheet ? '<p class="material-note area-mode-note">Informe as dimensões da chapa. O GrafiFlow calcula quantas chapas serão necessárias e permite cobrar por chapa ou pela área total comprada.</p>' : ''}
+        ${isSheet ? '<p class="material-note area-mode-note">Informe as dimensões da chapa. O MetriFlow calcula quantas chapas serão necessárias e permite cobrar por chapa ou pela área total comprada.</p>' : ''}
         ${material.laminationMaterialId ? '<p class="material-note">O encaixe da laminação será recalculado respeitando o formato e as dimensões do material selecionado.</p>' : ''}
       </div>
     `;
@@ -4221,7 +4221,7 @@ function downloadFile(filename, content, type = 'application/json') {
 
 function exportBackup() {
   const backup = {
-    app: 'GrafiFlow',
+    app: 'MetriFlow',
     version: APP_VERSION,
     exportedAt: new Date().toISOString(),
     draft: clone(state),
@@ -4238,7 +4238,7 @@ async function importBackup(file) {
   if (!file) return;
   try {
     const parsed = JSON.parse(await file.text());
-    if (!parsed || !['GrafiFlow', 'Nesto'].includes(parsed.app)) throw new Error('Arquivo incompatível');
+    if (!parsed || !['MetriFlow', 'GrafiFlow', 'Nesto'].includes(parsed.app)) throw new Error('Arquivo incompatível');
     if (parsed.draft) hydrateState(parsed.draft, { inferDefaultText: !parsed.draft.quoteId });
     if (Array.isArray(parsed.materials)) savedMaterials = parsed.materials.map(normalizeMaterial);
     if (Array.isArray(parsed.catalogItems)) savedCatalogItems = parsed.catalogItems.map((item) => ({ ...item, id: String(item.id).startsWith('catalog:') ? item.id : `catalog:${uid('item')}` }));
@@ -4254,7 +4254,7 @@ async function importBackup(file) {
     showToast('Backup importado com sucesso.');
   } catch (error) {
     console.error(error);
-    showToast('Esse arquivo não é um backup válido do GrafiFlow.', 'error');
+    showToast('Esse arquivo não é um backup válido do MetriFlow.', 'error');
   }
 }
 
@@ -4456,7 +4456,7 @@ function registerWebMcpTools() {
     register({
       name: 'calculate_nesting',
       title: 'Calcular aproveitamento',
-      description: 'Atualiza o cálculo do GrafiFlow usando as peças e bobinas que já estão na tela.',
+      description: 'Atualiza o cálculo do MetriFlow usando as peças e bobinas que já estão na tela.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute() {
@@ -4467,7 +4467,7 @@ function registerWebMcpTools() {
     register({
       name: 'read_grafiflow_summary',
       title: 'Ler resumo do cálculo',
-      description: 'Retorna o resumo do encaixe, custo e lucro exibidos no GrafiFlow.',
+      description: 'Retorna o resumo do encaixe, custo e lucro exibidos no MetriFlow.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, untrustedContentHint: false },
       execute() {
@@ -4715,7 +4715,7 @@ function initialize() {
   window.addEventListener('appinstalled', () => {
     deferredInstallPrompt = null;
     renderInstallButton();
-    showToast('GrafiFlow instalado como aplicativo.');
+    showToast('MetriFlow instalado como aplicativo.');
   });
   updateConnectionStatus();
   renderInstallButton();
@@ -4764,7 +4764,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   }).catch((error) => {
-    console.error('Não foi possível preparar a tela inicial do GrafiFlow.', error);
+    console.error('Não foi possível preparar a tela inicial do MetriFlow.', error);
     authMode = 'login';
     authNotice = 'Não foi possível carregar sua sessão. Entre novamente para continuar.';
     renderAuthMode();
