@@ -21,6 +21,7 @@ Use este checklist para passar da homologação para cobrança real. A configura
 - [ ] **Bloqueio após cinco senhas erradas:** o hook Password Verification Attempt está disponível apenas nos planos Supabase Teams e Enterprise. Como o projeto está no Free, esse bloqueio específico não pode ser ativado nesse plano; não o anuncie como ativo. Para mantê-lo, será necessário migrar para um plano compatível ou aprovar e revisar uma alternativa de autenticação no servidor.
 - [ ] **Asaas de produção:** o runtime observado em 03/11/2026 mantém `billingCheckoutEnabled=false`. Usar `ASAAS_ENVIRONMENT=production`, uma chave API e webhook criados na conta de produção do Asaas, publicar novamente e testar o ciclo real de forma controlada. Sandbox e produção são contas e credenciais distintas. Não reutilizar chave Sandbox em produção nem compartilhar chaves em chats ou no Git.
 - [ ] **Dados legais e atendimento:** completar os campos `[PENDENTE]` das páginas de termos e privacidade, incluindo responsável, contato, cancelamento, retenção, exclusão/exportação e regras de cobrança. Revisar o texto com orientação jurídica. As páginas estão com `noindex` enquanto incompletas.
+- [ ] **Disponibilidade da marca:** antes de investir em divulgação ou domínio, pesquisar “MetriFlow” e nomes semelhantes na base do INPI, nas classes de software/serviços relevantes e nos domínios. Há produtos de tecnologia com nomes iguais ou muito próximos em outros mercados; isso não confirma conflito no Brasil, mas exige validação da marca.
 - [ ] **Identidade no checkout:** abrir um checkout de homologação e confirmar qual nome comercial/legal o pagador verá. Resolver a apresentação da conta Asaas antes da divulgação.
 
 Para habilitar o espelhamento automático, crie um fine-grained token com acesso somente ao repositório de cópia `vicktordarosa07-source/grafiflow`, permissão **Contents: Read and write**, e cadastre-o como Secret `GRAFIFLOW_LEGACY_MIRROR_TOKEN` em `hprvisual-stack/grafiflow`. Nunca grave o valor no código ou em variáveis expostas ao navegador.
@@ -65,6 +66,8 @@ Liberar primeiro para um grupo pequeno. Só divulgar publicamente depois de conc
 ## Documentação oficial
 
 - [Plano Vercel Hobby](https://vercel.com/docs/plans/hobby)
+- [Busca de marcas do INPI](https://servicos.busca.inpi.gov.br/marcas/)
+- [Guia do INPI para busca e registro de marcas](https://www.gov.br/inpi/pt-br/servicos/marcas/guia-basico)
 - [Checklist de produção do Supabase](https://supabase.com/docs/guides/deployment/going-into-prod)
 - [SMTP próprio no Supabase Auth](https://supabase.com/docs/guides/auth/auth-smtp)
 - [Planos compatíveis com Auth Hooks](https://supabase.com/docs/guides/auth/auth-hooks)
