@@ -2,11 +2,12 @@
 
 Use este checklist para passar da homologação para cobrança real. A configuração do Sandbox e o deploy do app, sozinhos, não significam que o fluxo de cobrança em produção foi homologado.
 
-## Resultado da checagem em 02/11/2026
+## Resultado da checagem em 03/11/2026
 
 - `npm test`: 75 aprovados, 0 falhas. `npm run build`: aprovado. `npm audit --omit=dev`: 0 vulnerabilidades.
 - Site de produção e `/api/config`: HTTP 200; projeto Supabase correto. `billingEnabled=true`, mas `billingCheckoutEnabled=false`; o checkout está indisponível em produção e nenhum pagamento real foi feito nesta checagem.
-- Auth público do Supabase: cadastro por e-mail habilitado (`disable_signup=false`), mas `mailer_autoconfirm=true`; isso confirma contas automaticamente, sem exigir o botão de confirmação por e-mail.
+- Auth do Supabase: cadastro por e-mail habilitado, **Confirm email desligado** e **SMTP personalizado desligado**. O servidor padrão do Supabase só envia para membros da equipe e limita o envio a 2 mensagens por hora; não ligar confirmação até configurar e testar SMTP próprio.
+- Vercel: a equipe do projeto continua no Hobby. As variáveis `ASAAS_ENVIRONMENT`, `ASAAS_API_KEY` e `ASAAS_WEBHOOK_AUTH_TOKEN` estão cadastradas em Production, mas seus valores são secretos e não foram lidos. O runtime continua recusando checkout, então ainda é necessário garantir que chave e webhook sejam da conta de produção e definir `ASAAS_ENVIRONMENT=production`.
 - Não foi possível executar uma jornada de navegador autenticada ou um pagamento real: não foram criados usuários de teste nem iniciada cobrança na conta de produção. Os testes de cobrança automatizados usam respostas simuladas.
 - A marca MetriFlow e os arquivos do PWA foram publicados e verificados por HTTP em produção. A jornada visual autenticada e a atualização dos templates no painel Supabase ainda precisam de confirmação manual.
 
@@ -16,9 +17,9 @@ Use este checklist para passar da homologação para cobrança real. A configura
 - [ ] **Cópia do GitHub:** o fluxo automático de espelhamento está configurado para ignorar a etapa de cópia quando falta `GRAFIFLOW_LEGACY_MIRROR_TOKEN`. Até cadastrar um token de escopo mínimo como Secret de Actions no repositório principal, publicar cada release manualmente nos dois repositórios e conferir o mesmo SHA em `main`.
 - [ ] **Banco, backups e disponibilidade:** o Supabase Free pode pausar projeto por inatividade e não fornece backup automático diário para download. Ativar um plano com backup diário ou configurar e testar exportações externas periódicas do banco e dos arquivos de Storage.
 - [ ] **Homologação isolada:** criar um projeto Supabase separado para Preview/testes. O flag `private.grafiflow_billing_settings.enforcement_enabled` e os trials são compartilhados por qualquer deployment que use o mesmo banco.
-- [ ] **E-mail de produção:** desligar a confirmação automática observada em 02/11/2026, configurar SMTP transacional próprio no Supabase Auth, confirmar domínio remetente, SPF/DKIM/DMARC, redirects para `https://grafiflow.vercel.app` e testar confirmação de cadastro e recuperação de senha em endereços externos à equipe.
+- [ ] **E-mail de produção:** habilitar Confirm email depois de configurar SMTP transacional próprio no Supabase Auth, confirmar domínio remetente, SPF/DKIM/DMARC, redirects para `https://grafiflow.vercel.app` e testar confirmação de cadastro e recuperação de senha em endereços externos à equipe.
 - [ ] **Bloqueio após cinco senhas erradas:** o hook Password Verification Attempt está disponível apenas nos planos Supabase Teams e Enterprise. Como o projeto está no Free, esse bloqueio específico não pode ser ativado nesse plano; não o anuncie como ativo. Para mantê-lo, será necessário migrar para um plano compatível ou aprovar e revisar uma alternativa de autenticação no servidor.
-- [ ] **Asaas de produção:** o runtime observado em 02/11/2026 mantém `billingCheckoutEnabled=false`. Usar `ASAAS_ENVIRONMENT=production`, uma chave API e webhook criados na conta de produção do Asaas, publicar novamente e testar o ciclo real de forma controlada. Sandbox e produção são contas e credenciais distintas. Não reutilizar chave Sandbox em produção nem compartilhar chaves em chats ou no Git.
+- [ ] **Asaas de produção:** o runtime observado em 03/11/2026 mantém `billingCheckoutEnabled=false`. Usar `ASAAS_ENVIRONMENT=production`, uma chave API e webhook criados na conta de produção do Asaas, publicar novamente e testar o ciclo real de forma controlada. Sandbox e produção são contas e credenciais distintas. Não reutilizar chave Sandbox em produção nem compartilhar chaves em chats ou no Git.
 - [ ] **Dados legais e atendimento:** completar os campos `[PENDENTE]` das páginas de termos e privacidade, incluindo responsável, contato, cancelamento, retenção, exclusão/exportação e regras de cobrança. Revisar o texto com orientação jurídica. As páginas estão com `noindex` enquanto incompletas.
 - [ ] **Identidade no checkout:** abrir um checkout de homologação e confirmar qual nome comercial/legal o pagador verá. Resolver a apresentação da conta Asaas antes da divulgação.
 
