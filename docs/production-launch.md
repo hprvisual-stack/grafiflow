@@ -8,7 +8,7 @@ Use este checklist para passar da homologação para cobrança real. A configura
 - Site de produção e `/api/config`: HTTP 200; projeto Supabase correto. `billingEnabled=true`, mas `billingCheckoutEnabled=false`; o checkout está indisponível em produção e nenhum pagamento real foi feito nesta checagem.
 - Auth público do Supabase: cadastro por e-mail habilitado (`disable_signup=false`), mas `mailer_autoconfirm=true`; isso confirma contas automaticamente, sem exigir o botão de confirmação por e-mail.
 - Não foi possível executar uma jornada de navegador autenticada ou um pagamento real: não foram criados usuários de teste nem iniciada cobrança na conta de produção. Os testes de cobrança automatizados usam respostas simuladas.
-- A marca MetriFlow e o PWA foram verificados por HTTP local; a jornada visual em navegador e a atualização de templates no painel Supabase ainda precisam ser confirmadas após a publicação.
+- A marca MetriFlow e os arquivos do PWA foram publicados e verificados por HTTP em produção. A jornada visual autenticada e a atualização dos templates no painel Supabase ainda precisam de confirmação manual.
 
 ## Bloqueios antes de abrir venda ao público
 
