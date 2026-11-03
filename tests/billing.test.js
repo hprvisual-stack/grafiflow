@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import {
   addCalendarMonths,
   buildAsaasCheckoutPayload,
+  buildAsaasMonthlyPaymentLinkPayload,
   countdownLabel,
   deriveEntitlement,
   expectedPlanPriceCents,
@@ -13,12 +14,15 @@ import {
   periodStartAfterPayment,
   trialEndsAt,
 } from '../server/billing-domain.js';
+import { deriveOfflineEntitlement, OFFLINE_BILLING_CACHE_MAX_AGE_MS } from '../dist/offline-billing.js';
 
 const now = new Date('2026-10-31T15:00:00.000Z');
 const migration = await readFile(new URL('../supabase/migrations/20261031120000_grafiflow_subscriptions_entitlements.sql', import.meta.url), 'utf8');
 const checkoutHandler = await readFile(new URL('../api/asaas/checkout.js', import.meta.url), 'utf8');
 const webhookHandler = await readFile(new URL('../api/asaas/webhook.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');
+const paymentLinksAndLockoutMigration = await readFile(new URL('../supabase/migrations/20261103000000_billing_payment_links_and_login_lockout.sql', import.meta.url), 'utf8');
+const permanentFreeAccountsMigration = await readFile(new URL('../supabase/migrations/20261103010000_permanent_free_accounts.sql', import.meta.url), 'utf8');
 
 const scenarios = [
   ['01 new user waits at the trial gate', () => assert.equal(deriveEntitlement({}, now).state, 'trial_not_started')],
@@ -102,6 +106,15 @@ const scenarios = [
     assert.match(migration, /enforce_grafiflow_billing_access_on_record_write/);
     assert.match(migration, /GrafiFlow subscription access is inactive/);
   }],
+  ['31b permanent free access is private, user-id based, and restricted to the confirmed account', () => {
+    assert.match(permanentFreeAccountsMigration, /private\.grafiflow_permanent_free_accounts/);
+    assert.match(permanentFreeAccountsMigration, /coalesce\(user_row\.email_confirmed_at, user_row\.confirmed_at\) is not null/);
+    assert.match(permanentFreeAccountsMigration, /grant execute on function public\.is_grafiflow_permanent_free_account\(uuid\) to service_role/);
+    assert.match(permanentFreeAccountsMigration, /private\.grafiflow_is_permanent_free_account\(\)/);
+    assert.doesNotMatch(permanentFreeAccountsMigration, /hprvisual@gmail\.com/i);
+    assert.match(appSource, /acesso gratuito permanente ao GrafiFlow/i);
+    assert.match(checkoutHandler, /isPermanentFreeAccount\(user, config\)/);
+  }],
   ['32 an open client session transitions to blocked after the server period and grace end', () => {
     const end = new Date(now.getTime() - 10 * 86_400_000);
     assert.equal(deriveEntitlement({ current_period_end: end }, now).accessAllowed, false);
@@ -176,6 +189,101 @@ test('monthly checkout uses a backend-provided cycle price and recurrence only',
   assert.equal(payload.items[0].value, 35);
   assert.deepEqual(payload.subscription, { cycle: 'MONTHLY', nextDueDate: '2026-10-31' });
   assert.equal('installment' in payload, false);
+});
+
+test('annual one-time checkout offers Pix or card without installments', () => {
+  const payload = buildAsaasCheckoutPayload({
+    planType: 'annual', claim: { claimToken: 'claim-annual-pix' }, appUrl: 'https://grafiflow.vercel.app',
+  });
+  assert.deepEqual(payload.billingTypes, ['CREDIT_CARD', 'PIX']);
+  assert.deepEqual(payload.chargeTypes, ['DETACHED']);
+  assert.equal(payload.items[0].value, 450);
+  assert.equal('installment' in payload, false);
+});
+
+test('monthly payment link offers Asaas-supported recurring payment methods at the reserved cycle price', () => {
+  const payload = buildAsaasMonthlyPaymentLinkPayload({
+    claim: { claimToken: 'd4c7a184-1a2b-4f31-9c22-61546a6fb022', priceCents: 3500 },
+    endDate: '2026-11-09',
+  });
+  assert.equal(payload.value, 35);
+  assert.equal(payload.billingType, 'UNDEFINED');
+  assert.equal(payload.chargeType, 'RECURRENT');
+  assert.equal(payload.subscriptionCycle, 'MONTHLY');
+  assert.equal(payload.dueDateLimitDays, 7);
+  assert.equal(payload.externalReference, 'd4c7a184-1a2b-4f31-9c22-61546a6fb022');
+  assert.equal(payload.endDate, '2026-11-09');
+  assert.equal(payload.notificationEnabled, true);
+});
+
+test('payment link builder rejects unsupported price and malformed expiration date', () => {
+  const claim = { claimToken: 'd4c7a184-1a2b-4f31-9c22-61546a6fb022', priceCents: 5000 };
+  assert.throws(() => buildAsaasMonthlyPaymentLinkPayload({ claim: { ...claim, priceCents: 4900 } }), /cobrança mensal inválida/);
+  assert.throws(() => buildAsaasMonthlyPaymentLinkPayload({ claim, endDate: 'not-a-date' }), /Validade do link/);
+});
+
+test('payment link migration consumes registered recurring links and prepares the five-failure Auth hook', () => {
+  assert.match(paymentLinksAndLockoutMigration, /status in \('creating', 'active', 'used', 'paid'/);
+  assert.match(paymentLinksAndLockoutMigration, /v_payment_link_id text/);
+  assert.match(paymentLinksAndLockoutMigration, /provider_checkout_id = v_payment_link_id[\s\S]*status in \('active', 'used'\)/);
+  assert.match(paymentLinksAndLockoutMigration, /status = 'used', checkout_url = null/);
+  assert.match(paymentLinksAndLockoutMigration, /failed_attempts = least\(failures\.failed_attempts \+ 1, 5\)/);
+  assert.match(paymentLinksAndLockoutMigration, /failed_attempts >= 5/);
+  assert.match(paymentLinksAndLockoutMigration, /reset_grafiflow_password_failures/);
+  assert.match(paymentLinksAndLockoutMigration, /Teams\/Enterprise only/);
+  assert.match(paymentLinksAndLockoutMigration, /security invoker[\s\S]*delete from private\.grafiflow_password_login_failures where user_id = auth\.uid\(\)/);
+  assert.match(paymentLinksAndLockoutMigration, /users can clear their own password lockout[\s\S]*for delete to authenticated[\s\S]*auth\.uid\(\).*user_id/);
+  assert.match(appSource, /reset_grafiflow_password_failures/);
+  assert.match(appSource, /acesso foi bloqueado após cinco senhas incorretas/i);
+});
+
+test('offline access requires a fresh entitlement that was validated by the server', () => {
+  const now = Date.parse('2026-11-02T12:00:00.000Z');
+  const cache = {
+    state: 'subscription_active',
+    access_allowed: true,
+    server_now: new Date(now).toISOString(),
+    client_cached_at: now,
+    current_period_end: new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  assert.equal(deriveOfflineEntitlement(cache, now).access_allowed, true);
+  assert.equal(deriveOfflineEntitlement({ ...cache, client_cached_at: now - OFFLINE_BILLING_CACHE_MAX_AGE_MS - 1 }, now), null);
+  assert.equal(deriveOfflineEntitlement({ ...cache, client_cached_at: now + 1 }, now), null);
+  assert.equal(deriveOfflineEntitlement({ ...cache, client_cached_at: undefined }, now), null);
+});
+
+test('offline policy derives paid grace and blocks after its deadline', () => {
+  const serverNow = Date.parse('2026-11-02T12:00:00.000Z');
+  const periodEnd = serverNow - 9 * 24 * 60 * 60 * 1000;
+  const cache = {
+    state: 'subscription_active',
+    access_allowed: true,
+    server_now: new Date(serverNow).toISOString(),
+    client_cached_at: serverNow,
+    current_period_end: new Date(periodEnd).toISOString(),
+  };
+  const duringGrace = deriveOfflineEntitlement(cache, serverNow);
+  assert.equal(duringGrace.state, 'grace_active');
+  assert.equal(duringGrace.access_allowed, true);
+  const afterGrace = deriveOfflineEntitlement(cache, serverNow + 24 * 60 * 60 * 1000 + 1);
+  assert.equal(afterGrace.state, 'subscription_expired');
+  assert.equal(afterGrace.access_allowed, false);
+});
+
+test('offline policy never trusts an expired trial or stale legacy entitlement', () => {
+  const serverNow = Date.parse('2026-11-02T12:00:00.000Z');
+  const trial = {
+    state: 'trial_active',
+    access_allowed: true,
+    trial_status: 'active',
+    server_now: new Date(serverNow).toISOString(),
+    client_cached_at: serverNow,
+    trial_ends_at: new Date(serverNow + 60 * 60 * 1000).toISOString(),
+  };
+  assert.equal(deriveOfflineEntitlement(trial, serverNow + 2 * 60 * 60 * 1000).access_allowed, false);
+  const legacy = { ...trial, legacy_access: true, trial_ends_at: null };
+  assert.equal(deriveOfflineEntitlement(legacy, serverNow).access_allowed, true);
+  assert.equal(deriveOfflineEntitlement(legacy, serverNow + OFFLINE_BILLING_CACHE_MAX_AGE_MS + 1), null);
 });
 
 test('sign-in and session restore refresh payment button availability', () => {

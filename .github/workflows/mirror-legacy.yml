@@ -14,8 +14,29 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out canonical main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Build production files
+        run: npm run build
+
   mirror:
     if: ${{ github.repository == 'hprvisual-stack/grafiflow' }}
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Check whether the legacy-repository token is configured
@@ -33,7 +54,7 @@ jobs:
 
       - name: Check out canonical main
         if: ${{ steps.token.outputs.available == 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 1

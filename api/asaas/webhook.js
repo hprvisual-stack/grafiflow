@@ -15,6 +15,33 @@ function validWebhookToken(request, expected) {
   return receivedBuffer.length === expectedBuffer.length && timingSafeEqual(receivedBuffer, expectedBuffer);
 }
 
+async function disableRegisteredPaymentLink(payload, config) {
+  const paymentLinkId = String(
+    payload?.payment?.paymentLink || payload?.subscription?.paymentLink || payload?.paymentLink || '',
+  );
+  if (!/^[a-z0-9_-]{1,100}$/i.test(paymentLinkId)) return;
+
+  const query = new URLSearchParams({
+    select: 'provider_checkout_id',
+    provider_checkout_id: `eq.${paymentLinkId}`,
+    status: 'eq.active',
+    limit: '1',
+  });
+  const registeredLinks = await supabaseRequest(`/rest/v1/asaas_billing_checkouts?${query}`, { config });
+  if (!Array.isArray(registeredLinks) || registeredLinks.length !== 1) return;
+
+  try {
+    await callAsaas(`/paymentLinks/${encodeURIComponent(paymentLinkId)}`, {
+      config,
+      method: 'PUT',
+      body: { active: false },
+    });
+  } catch (error) {
+    // A missing or already removed link is already inactive, so reconciliation can continue.
+    if (error?.asaasStatus !== 404) throw error;
+  }
+}
+
 export async function POST(request) {
   try {
     const config = billingConfig();
@@ -27,6 +54,10 @@ export async function POST(request) {
     let payload;
     try { payload = JSON.parse(raw); } catch { return jsonResponse({ error: 'JSON inválido.' }, 400); }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return jsonResponse({ error: 'Evento inválido.' }, 400);
+
+    // Only disable Payment Links already registered by GrafiFlow. This prevents the same
+    // recurring link from creating multiple subscriptions while leaving unrelated links alone.
+    await disableRegisteredPaymentLink(payload, config);
 
     const result = await supabaseRequest('/rest/v1/rpc/process_grafiflow_billing_event', {
       config,

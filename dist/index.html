@@ -8,7 +8,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20261101-billing-runtime-config" />
     <link rel="icon" href="./grafiflow-favicon-v3.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./grafiflow-icon-192-v3.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261101-billing-runtime-config" />
+    <link rel="stylesheet" href="./styles.css?v=20261103-payment-methods" />
     <title>GrafiFlow — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -196,7 +196,7 @@
 
                 <section class="online-card panel">
                   <div class="online-card-icon">⌁</div>
-                  <div><span class="section-kicker">PRÓXIMA ETAPA</span><h3>Comprar materiais perto de você</h3><p>Na versão online, o GrafiFlow poderá pesquisar fornecedores e comparar preços quando houver conexão.</p><button class="secondary-button small-button" id="find-stores-button" type="button">Buscar no mapa</button></div>
+                  <div><span class="section-kicker">PRÓXIMA ETAPA</span><h3>Encontrar fornecedores</h3><p>Abre uma pesquisa externa no Google Maps relacionada aos materiais do orçamento.</p><button class="secondary-button small-button" id="find-stores-button" type="button">Buscar fornecedores no Google Maps</button></div>
                 </section>
               </aside>
             </div>
@@ -270,6 +270,7 @@
                 <button class="text-button" id="auth-mode-toggle" type="button">Criar conta</button>
               </div>
               <p class="auth-sync-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="15" height="11" rx="2"></rect><path d="M7 20h6m-3-4v4"></path><rect x="16" y="10" width="5.5" height="10" rx="1.2"></rect></svg><span>Sua conta sincroniza seus dados entre dispositivos.</span></p>
+              <nav class="auth-legal-links" aria-label="Documentos legais"><a href="/termos-de-uso/">Termos de uso</a><a href="/politica-de-privacidade/">Política de privacidade</a></nav>
             </div>
             <form id="recovery-request-form" class="account-auth-form" hidden>
               <label class="field"><span>E-mail cadastrado</span><input id="recover-email" type="email" autocomplete="email" required placeholder="voce@empresa.com" /></label>
@@ -297,13 +298,13 @@
               <article class="billing-plan-card">
                 <span class="section-kicker">PLANO MENSAL</span>
                 <strong>R$ 35,00/mês</strong>
-                <p>Nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
+                <p>Cobrança mensal recorrente. No link seguro do Asaas, escolha cartão, Pix ou boleto conforme as opções disponíveis. R$ 35,00 nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
                 <button id="billing-checkout-button" class="secondary-button" type="button" data-billing-plan="monthly">Contratar plano mensal</button>
               </article>
               <article class="billing-plan-card">
                 <span class="section-kicker">PLANO ANUAL</span>
                 <strong>R$ 450,00 à vista</strong>
-                <p>12 meses de acesso. Pagamento único, sem parcelamento.</p>
+                <p>12 meses de acesso. Pagamento único via Pix ou cartão, sem parcelamento.</p>
                 <button id="billing-annual-checkout-button" class="primary-button" type="button" data-billing-plan="annual">Contratar plano anual</button>
               </article>
             </div>
@@ -362,6 +363,7 @@
           <div class="account-modal-actions"><button class="secondary-button" id="auth-sync-now" type="button">Sincronizar agora</button><button class="secondary-button" id="auth-signout" type="button">Sair da conta</button></div>
             </section>
             <div class="account-modal-actions account-close-actions"><button class="secondary-button" id="cancel-account-modal" type="button">Fechar</button></div>
+            <nav class="auth-legal-links" aria-label="Documentos legais"><a href="/termos-de-uso/">Termos de uso</a><a href="/politica-de-privacidade/">Política de privacidade</a></nav>
             <p class="account-offline-note">O GrafiFlow funciona offline. A sincronização acontece quando houver internet; seus dados locais e o backup continuam disponíveis.</p>
           </div>
         </section>
@@ -378,12 +380,12 @@
         <div class="billing-plan-options billing-gate-plans">
           <article class="billing-plan-card">
             <span class="section-kicker">PLANO MENSAL</span><strong>R$ 35,00/mês</strong>
-            <p>Nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
+            <p>Cobrança mensal recorrente. No link seguro do Asaas, escolha cartão, Pix ou boleto conforme as opções disponíveis. R$ 35,00 nos três primeiros ciclos pagos; R$ 50,00/mês a partir do quarto.</p>
             <button class="secondary-button" type="button" data-billing-plan="monthly">Assinar plano mensal</button>
           </article>
           <article class="billing-plan-card">
             <span class="section-kicker">PLANO ANUAL</span><strong>R$ 450,00 à vista</strong>
-            <p>12 meses de acesso. Pagamento único, sem parcelamento.</p>
+            <p>12 meses de acesso. Pagamento único via Pix ou cartão, sem parcelamento.</p>
             <button class="primary-button" type="button" data-billing-plan="annual">Assinar plano anual</button>
           </article>
         </div>
@@ -410,7 +412,7 @@
         <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
       </div>
     </div>
-    <script src="./api/config?v=20261101-billing-runtime-config"></script>
-    <script type="module" src="./app.js?v=20261101-billing-runtime-config"></script>
+    <script src="./api/config?v=20261103-payment-methods"></script>
+    <script type="module" src="./app.js?v=20261103-payment-methods"></script>
   </body>
 </html>

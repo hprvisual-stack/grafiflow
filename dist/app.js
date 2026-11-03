@@ -1,3 +1,5 @@
+import { deriveOfflineEntitlement } from './offline-billing.js';
+
 const APP_VERSION = '1.3.0';
 const DB_NAME = 'nesto-local-v1';
 const DB_VERSION = 3;
@@ -688,10 +690,7 @@ function billingCacheKey() {
 function readCachedBillingEntitlement() {
   try {
     const value = JSON.parse(localStorage.getItem(billingCacheKey()) || 'null');
-    if (!value || typeof value !== 'object') return null;
-    const elapsed = Math.max(0, Date.now() - Number(value.client_cached_at || Date.now()));
-    if (value.server_now) value.server_now = new Date(new Date(value.server_now).getTime() + elapsed).toISOString();
-    return value;
+    return deriveOfflineEntitlement(value);
   } catch { return null; }
 }
 
@@ -799,7 +798,7 @@ function renderBillingHistory(periods = billingHistory) {
   }
 }
 
-function applyBillingEntitlement(entitlement, periods = billingHistory) {
+function applyBillingEntitlement(entitlement, periods = billingHistory, { persistCache = true } = {}) {
   if (!entitlement || typeof entitlement !== 'object') return;
   billingEntitlement = entitlement;
   billingHistory = Array.isArray(periods) ? periods : [];
@@ -808,7 +807,9 @@ function applyBillingEntitlement(entitlement, periods = billingHistory) {
     serverNowMs: Number.isFinite(serverNow) ? serverNow : Date.now(),
     performanceNow: performance.now(),
   };
-  try { localStorage.setItem(billingCacheKey(), JSON.stringify({ ...entitlement, client_cached_at: Date.now() })); } catch { /* cache local é opcional */ }
+  if (persistCache && !entitlement.client_cached_at) {
+    try { localStorage.setItem(billingCacheKey(), JSON.stringify({ ...entitlement, client_cached_at: Date.now() })); } catch { /* cache local é opcional */ }
+  }
 
   const body = document.body;
   const appShell = document.querySelector('.app-shell');
@@ -831,6 +832,7 @@ function applyBillingEntitlement(entitlement, periods = billingHistory) {
       trial_expired: 'Seu teste gratuito terminou',
       subscription_expired: 'Sua assinatura foi suspensa',
       payment_pending: 'Aguardando confirmação do pagamento',
+      offline_unknown: 'Conecte-se para validar sua assinatura',
     };
     title.textContent = titles[entitlement.state] || 'Escolha um plano para continuar';
   }
@@ -840,6 +842,7 @@ function applyBillingEntitlement(entitlement, periods = billingHistory) {
       trial_expired: 'Seu período gratuito de 15 dias chegou ao fim. Escolha um plano para continuar utilizando o sistema.',
       subscription_expired: 'O período de carência de 10 dias terminou. Regularize sua assinatura para continuar utilizando o sistema.',
       payment_pending: 'O Asaas ainda não confirmou o pagamento. O acesso será liberado assim que a confirmação chegar.',
+      offline_unknown: 'Conecte-se à internet para validar sua assinatura. Seus dados locais continuam preservados neste dispositivo.',
     };
     copy.textContent = descriptions[entitlement.state] || 'Escolha uma forma de assinatura para retomar o acesso aos recursos do GrafiFlow.';
   }
@@ -849,6 +852,7 @@ function applyBillingEntitlement(entitlement, periods = billingHistory) {
       trial_expired: 'O teste grátis não recebe período de carência.',
       subscription_expired: 'Seus dados continuam preservados enquanto o acesso estiver suspenso.',
       payment_pending: 'Não faça outra cobrança enquanto esta confirmação estiver em andamento.',
+      offline_unknown: 'Não foi possível validar a assinatura sem conexão. Reconecte-se para continuar.',
     };
     status.textContent = isVerifying ? 'Consultando o status da sua assinatura…' : (messages[entitlement.state] || '');
     status.hidden = !status.textContent;
@@ -911,7 +915,7 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
   const state = subscription?.state || 'trial_not_started';
   const paidCycles = Number(subscription?.paid_monthly_cycles || 0);
   const statusLabels = {
-    legacy_access: 'Acesso garantido',
+    legacy_access: subscription?.permanent_free ? 'Acesso gratuito permanente' : 'Acesso garantido',
     trial_not_started: 'Teste não iniciado',
     trial_active: 'Teste grátis ativo',
     trial_expired: 'Teste encerrado',
@@ -919,12 +923,15 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
     grace_active: 'Período de carência',
     subscription_expired: 'Acesso suspenso',
     payment_pending: 'Pagamento em análise',
+    offline_unknown: 'Validação online necessária',
   };
   badge.textContent = statusLabels[state] || 'Indisponível';
   badge.dataset.status = state;
 
   const descriptions = {
-    legacy_access: 'Este espaço já existia antes da ativação da cobrança e mantém seu acesso e seus dados preservados.',
+    legacy_access: subscription?.permanent_free
+      ? 'Esta conta tem acesso gratuito permanente ao GrafiFlow; não é necessário contratar um plano.'
+      : 'Este espaço já existia antes da ativação da cobrança e mantém seu acesso e seus dados preservados.',
     trial_not_started: 'Seu teste começa quando você escolher “Inicie seu teste grátis de 15 dias”. A contratação de um plano também está disponível.',
     trial_active: `Teste gratuito ativo até ${formatBillingDate(subscription?.trial_ends_at, true)}. Depois, o acesso depende de uma assinatura confirmada.`,
     trial_expired: 'O teste gratuito terminou. Para continuar usando o GrafiFlow, escolha um dos planos abaixo.',
@@ -936,10 +943,11 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
     grace_active: `Sua assinatura está na carência. Regularize até ${formatBillingDate(subscription?.grace_period_ends_at, true)} para manter o acesso sem interrupção.`,
     subscription_expired: 'O período de carência terminou. Regularize sua assinatura para reativar o acesso; seus dados foram preservados.',
     payment_pending: 'Aguardando o Asaas confirmar um pagamento. O retorno do checkout, sozinho, não libera o sistema.',
+    offline_unknown: 'A assinatura não pode ser validada sem conexão. Seus dados locais continuam preservados; reconecte-se para liberar o uso do sistema.',
   };
   description.textContent = descriptions[state] || 'Consulte os planos disponíveis para sua conta.';
 
-  const planNames = { monthly: 'Mensal', annual: 'Anual', legacy: 'Acesso garantido' };
+  const planNames = { monthly: 'Mensal', annual: 'Anual', legacy: subscription?.permanent_free ? 'Gratuito permanente' : 'Acesso garantido' };
   const currentPlan = document.getElementById('billing-current-plan');
   const periodLabel = document.getElementById('billing-period-label');
   const dueLabel = document.getElementById('billing-due-label');
@@ -993,8 +1001,8 @@ async function refreshWorkspaceEntitlement() {
   if (!isBillingEnabled() || !cloudSession?.access_token) return null;
   if (!navigator.onLine) {
     const cached = readCachedBillingEntitlement();
-    if (cached) applyBillingEntitlement(cached, billingHistory);
-    else applyBillingEntitlement({ state: 'offline_unknown', access_allowed: true, legacy_access: false, server_now: new Date().toISOString() }, billingHistory);
+    if (cached) applyBillingEntitlement(cached, billingHistory, { persistCache: false });
+    else applyBillingEntitlement({ state: 'offline_unknown', access_allowed: false, legacy_access: false, server_now: new Date().toISOString() }, billingHistory, { persistCache: false });
     return billingEntitlement;
   }
   if (billingRefreshPromise) return billingRefreshPromise;
@@ -1010,11 +1018,11 @@ async function refreshWorkspaceEntitlement() {
     return entitlement;
   })().catch((error) => {
     const cached = readCachedBillingEntitlement();
-    if (cached) applyBillingEntitlement(cached, billingHistory);
+    if (cached) applyBillingEntitlement(cached, billingHistory, { persistCache: false });
     const message = String(error?.message || 'Não foi possível consultar a assinatura.');
     setBillingFeedback(message, true);
     if (!cached) {
-      applyBillingEntitlement({ state: 'payment_pending', access_allowed: false, legacy_access: false, server_now: new Date().toISOString() }, []);
+      applyBillingEntitlement({ state: 'offline_unknown', access_allowed: false, legacy_access: false, server_now: new Date().toISOString() }, [], { persistCache: false });
     }
     return billingEntitlement;
   }).finally(() => { billingRefreshPromise = null; });
@@ -1995,8 +2003,8 @@ function setAuthAccessUI(authenticated) {
     }, 15_000);
     if (!navigator.onLine) {
       const cached = readCachedBillingEntitlement();
-      if (cached) applyBillingEntitlement(cached, billingHistory);
-      else applyBillingEntitlement({ state: 'offline_unknown', access_allowed: true, legacy_access: false, server_now: new Date().toISOString() }, billingHistory);
+      if (cached) applyBillingEntitlement(cached, billingHistory, { persistCache: false });
+      else applyBillingEntitlement({ state: 'offline_unknown', access_allowed: false, legacy_access: false, server_now: new Date().toISOString() }, billingHistory, { persistCache: false });
     } else {
       void refreshWorkspaceEntitlement();
     }
@@ -2110,7 +2118,11 @@ async function submitCloudAuth(event) {
     }
   } catch (error) {
     const message = String(error.message || 'Não foi possível conectar a conta.');
-    if (/invalid login credentials|invalid credentials/i.test(message)) authNotice = 'E-mail ou senha incorretos. Confira os dados e, se este for o primeiro acesso, confirme o cadastro pelo e-mail.';
+    if (/cinco tentativas|limite de tentativas|redefina sua senha para continuar/i.test(message)) {
+      authMode = 'recovery-request';
+      setValue('recover-email', email);
+      authNotice = 'O acesso foi bloqueado após cinco senhas incorretas. Solicite a recuperação por e-mail para desbloquear a conta.';
+    } else if (/invalid login credentials|invalid credentials/i.test(message)) authNotice = 'E-mail ou senha incorretos. Confira os dados e, se este for o primeiro acesso, confirme o cadastro pelo e-mail.';
     else if (/email not confirmed/i.test(message)) authNotice = 'Seu cadastro ainda não foi confirmado. Abra o e-mail de confirmação e toque no botão para ativar a conta.';
     else if (/failed to fetch|networkerror|load failed/i.test(message)) authNotice = 'Não foi possível conectar ao serviço de login. Verifique a internet do tablet e tente novamente.';
     else authNotice = message;
@@ -2143,6 +2155,19 @@ async function submitPasswordRecoveryRequest(event) {
   }
 }
 
+async function resetFailedPasswordAttempts(accessToken) {
+  try {
+    await cloudFetch('/rest/v1/rpc/reset_grafiflow_password_failures', {
+      method: 'POST',
+      token: accessToken,
+      body: {},
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function submitRecoveredPassword(event) {
   event.preventDefault();
   const nextPassword = document.getElementById('recovery-new-password')?.value || '';
@@ -2154,14 +2179,17 @@ async function submitRecoveredPassword(event) {
   if (button) button.disabled = true;
   try {
     const user = await cloudFetch('/auth/v1/user', { method: 'PUT', body: { password: nextPassword }, token: cloudSession.access_token });
+    const lockReset = await resetFailedPasswordAttempts(cloudSession.access_token);
     saveCloudSession({ ...cloudSession, user: user || cloudSession.user });
     document.getElementById('password-recovery-form')?.reset();
     authMode = 'account';
-    authNotice = 'Senha redefinida. Sua nova senha já está ativa.';
+    authNotice = lockReset
+      ? 'Senha redefinida. Sua nova senha já está ativa.'
+      : 'Senha redefinida, mas não foi possível confirmar o desbloqueio. Solicite suporte antes de tentar entrar novamente.';
     setAuthAccessUI(true);
     renderAuthMode();
     updateAccountStatus();
-    showToast('Senha redefinida com sucesso.');
+    showToast(lockReset ? 'Senha redefinida com sucesso.' : 'Senha redefinida; o desbloqueio não foi confirmado.', lockReset ? 'success' : 'error');
   } catch (error) {
     showToast(error.message || 'Não foi possível redefinir a senha.', 'error');
   } finally {
@@ -2187,11 +2215,14 @@ async function submitPasswordChange(event) {
     });
     if (!verified?.access_token) throw new Error('Não foi possível confirmar a senha atual.');
     const user = await cloudFetch('/auth/v1/user', { method: 'PUT', body: { password: nextPassword }, token: verified.access_token });
+    const lockReset = await resetFailedPasswordAttempts(verified.access_token);
     saveCloudSession({ ...verified, user: user || verified.user, expires_at: Math.floor(Date.now() / 1000) + Number(verified.expires_in || 3600) });
     document.getElementById('change-password-form')?.reset();
-    authNotice = 'Senha atualizada com sucesso.';
+    authNotice = lockReset
+      ? 'Senha atualizada com sucesso.'
+      : 'Senha atualizada, mas não foi possível confirmar a limpeza do bloqueio de login.';
     updateAccountStatus();
-    showToast('Senha atualizada com sucesso.');
+    showToast(lockReset ? 'Senha atualizada com sucesso.' : 'Senha atualizada; o bloqueio não foi confirmado.', lockReset ? 'success' : 'error');
   } catch (error) {
     const message = String(error.message || 'Não foi possível atualizar a senha.');
     showToast(/invalid login credentials|invalid credentials/i.test(message) ? 'A senha atual está incorreta.' : message, 'error');
@@ -4719,7 +4750,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261101-billing-runtime-config').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261103-payment-methods').catch(() => undefined);
 }
 
 initialize();

@@ -1,6 +1,6 @@
 const BRAZIL_TIME_ZONE = 'America/Sao_Paulo';
 const CHECKOUT_MINUTES_TO_EXPIRE = 60;
-export { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_CYCLES, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS, monthlyPriceCents, addCalendarMonths, deriveEntitlement, countdownLabel, buildAsaasCheckoutPayload, expectedPlanPriceCents } from './billing-domain.js';
+export { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_CYCLES, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS, monthlyPriceCents, addCalendarMonths, deriveEntitlement, countdownLabel, buildAsaasCheckoutPayload, buildAsaasMonthlyPaymentLinkPayload, expectedPlanPriceCents } from './billing-domain.js';
 import { TRIAL_DAYS, GRACE_DAYS, MONTHLY_PROMO_PRICE_CENTS, MONTHLY_STANDARD_PRICE_CENTS, ANNUAL_PRICE_CENTS } from './billing-domain.js';
 
 export class HttpError extends Error {
@@ -83,6 +83,15 @@ export function billingConfig() {
   };
 }
 
+export async function isPermanentFreeAccount(user, config) {
+  if (!user?.id || !(user.email_confirmed_at || user.confirmed_at)) return false;
+  return (await supabaseRequest('/rest/v1/rpc/is_grafiflow_permanent_free_account', {
+    config,
+    method: 'POST',
+    body: { p_user_id: user.id },
+  })) === true;
+}
+
 export function setRequestDeadline(config) {
   config.deadlineAt = Date.now() + 25_000;
 }
@@ -158,7 +167,7 @@ export async function supabaseRequest(path, { config, method = 'GET', body, pref
   });
   const raw = await response.text();
   if (!response.ok) {
-    console.error('Erro do Supabase na integração Asaas.', response.status, raw.slice(0, 300));
+    console.error('Erro do Supabase na integração Asaas.', response.status);
     throw new HttpError(502, 'Não foi possível atualizar os dados da assinatura. Tente novamente.');
   }
   if (!raw) return null;
@@ -191,6 +200,16 @@ export function asaasCheckoutUrl(checkout, config) {
   return `https://${host}/checkoutSession/show?id=${encodeURIComponent(id)}`;
 }
 
+export function asaasPaymentLinkUrl(paymentLink) {
+  const candidate = String(paymentLink?.url || '');
+  if (!candidate) throw new HttpError(502, 'O Asaas não retornou o endereço do link de pagamento.');
+  try {
+    const url = new URL(candidate);
+    if (url.protocol === 'https:' && (url.hostname === 'asaas.com' || url.hostname.endsWith('.asaas.com'))) return url.toString();
+  } catch { /* valida abaixo */ }
+  throw new HttpError(502, 'O Asaas retornou um endereço de pagamento inválido.');
+}
+
 export async function callAsaas(path, { config, method = 'GET', body } = {}) {
   const response = await fetch(`${config.asaasApiUrl}${path}`, {
     method,
@@ -207,7 +226,7 @@ export async function callAsaas(path, { config, method = 'GET', body } = {}) {
   let data = {};
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
   if (!response.ok) {
-    console.error('Erro do Asaas.', response.status, JSON.stringify(data).slice(0, 400));
+    console.error('Erro do Asaas.', response.status);
     const error = new HttpError(502, 'O Asaas não aceitou a operação. Verifique o ambiente e as credenciais configurados.');
     error.asaasStatus = response.status;
     error.asaasDefinitive = response.status >= 400 && response.status < 500;

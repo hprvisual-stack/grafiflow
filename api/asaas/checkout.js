@@ -4,11 +4,15 @@ import {
   authenticatedUser,
   billingConfig,
   asaasCheckoutUrl,
+  asaasPaymentLinkUrl,
+  brazilDateAfterDays,
+  buildAsaasMonthlyPaymentLinkPayload,
   buildAsaasCheckoutPayload,
   callAsaas,
   checkoutConstants,
   errorResponse,
   HttpError,
+  isPermanentFreeAccount,
   jsonResponse,
   requireWorkspaceId,
   setRequestDeadline,
@@ -54,6 +58,9 @@ export async function POST(request) {
     if (!['monthly', 'annual'].includes(planType)) throw new HttpError(400, 'Escolha um plano mensal ou anual.');
     const { user } = await authenticatedUser(request, config);
     await assertWorkspaceOwner(workspaceId, user, config);
+    if (await isPermanentFreeAccount(user, config)) {
+      throw new HttpError(409, 'Esta conta tem acesso gratuito permanente e não precisa contratar um plano.');
+    }
 
     const claimed = await supabaseRequest('/rest/v1/rpc/claim_grafiflow_checkout', {
       config,
@@ -79,10 +86,25 @@ export async function POST(request) {
 
     claimToken = claimed.claimToken;
     const { checkoutMinutesToExpire } = checkoutConstants();
-    const payload = buildAsaasCheckoutPayload({ planType, claim: claimed, appUrl: config.appUrl, minutesToExpire: checkoutMinutesToExpire });
+    const useMonthlyPaymentLink = planType === 'monthly' && !claimed.scheduled;
+    const payload = useMonthlyPaymentLink
+      ? buildAsaasMonthlyPaymentLinkPayload({ claim: claimed, endDate: brazilDateAfterDays(7) })
+      : buildAsaasCheckoutPayload({ planType, claim: claimed, appUrl: config.appUrl, minutesToExpire: checkoutMinutesToExpire });
     asaasCheckoutAttempted = true;
-    const checkout = await callAsaas('/checkouts', { config, method: 'POST', body: payload });
-    const checkoutUrl = asaasCheckoutUrl(checkout, config);
+    const checkout = await callAsaas(useMonthlyPaymentLink ? '/paymentLinks' : '/checkouts', { config, method: 'POST', body: payload });
+    let checkoutUrl;
+    try {
+      checkoutUrl = useMonthlyPaymentLink
+        ? asaasPaymentLinkUrl(checkout)
+        : asaasCheckoutUrl(checkout, config);
+    } catch (error) {
+      if (useMonthlyPaymentLink && checkout?.id) {
+        await callAsaas(`/paymentLinks/${encodeURIComponent(String(checkout.id))}`, { config, method: 'DELETE' })
+          .catch((cleanupError) => console.error('Não foi possível remover um link Asaas incompleto.', cleanupError?.name || 'Error'));
+      }
+      throw error;
+    }
+    const expiresAt = new Date(Date.now() + (useMonthlyPaymentLink ? 7 * 24 * 60 * 60_000 : checkoutMinutesToExpire * 60_000));
 
     await supabaseRequest('/rest/v1/rpc/finalize_grafiflow_checkout', {
       config,
@@ -92,7 +114,7 @@ export async function POST(request) {
         p_claim_token: claimToken,
         p_checkout_id: String(checkout.id),
         p_checkout_url: checkoutUrl,
-        p_checkout_expires_at: new Date(Date.now() + checkoutMinutesToExpire * 60_000).toISOString(),
+        p_checkout_expires_at: expiresAt.toISOString(),
       },
     });
     claimToken = '';

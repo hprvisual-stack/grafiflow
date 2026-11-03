@@ -112,7 +112,7 @@ export function buildAsaasCheckoutPayload({ planType, claim, appUrl, minutesToEx
   };
   if (planType === 'annual') {
     return {
-      billingTypes: ['CREDIT_CARD'],
+      billingTypes: ['CREDIT_CARD', 'PIX'],
       chargeTypes: ['DETACHED'],
       minutesToExpire,
       externalReference: claim.claimToken,
@@ -132,6 +132,32 @@ export function buildAsaasCheckoutPayload({ planType, claim, appUrl, minutesToEx
     callback,
     items: [{ name: 'Plano mensal GrafiFlow', description: amountCents === 3500 ? 'Uma das três primeiras mensalidades promocionais' : 'Mensalidade do plano GrafiFlow', quantity: 1, value: amountCents / 100 }],
     subscription: { cycle: 'MONTHLY', nextDueDate: claim.nextDueDate },
+  };
+}
+
+export function buildAsaasMonthlyPaymentLinkPayload({ claim, endDate }) {
+  const amountCents = Number(claim?.priceCents);
+  const claimToken = String(claim?.claimToken || '');
+  if (![3500, 5000].includes(amountCents) || !/^[0-9a-f-]{36}$/i.test(claimToken)) {
+    throw new TypeError('Configuração de cobrança mensal inválida.');
+  }
+  if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate))) {
+    throw new TypeError('Validade do link de pagamento inválida.');
+  }
+
+  return {
+    name: 'Assinatura mensal GrafiFlow',
+    description: amountCents === 3500
+      ? 'Assinatura mensal GrafiFlow: uma das três primeiras mensalidades promocionais.'
+      : 'Assinatura mensal GrafiFlow.',
+    value: amountCents / 100,
+    billingType: 'UNDEFINED',
+    chargeType: 'RECURRENT',
+    subscriptionCycle: 'MONTHLY',
+    dueDateLimitDays: 7,
+    externalReference: claimToken,
+    notificationEnabled: true,
+    ...(endDate ? { endDate } : {}),
   };
 }
 

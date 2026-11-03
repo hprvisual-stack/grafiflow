@@ -643,3 +643,6 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .cost-breakdown { display: grid; gap: 12px; }
 .cost-group { display: grid; gap: 7px; }
 .cost-group > h4 { margin: 0; color: var(--accent-deep); font-size: 0.67rem; font-weight: 850; letter-spacing: 0.07em; text-transform: uppercase; }
+.auth-legal-links { display: flex; justify-content: center; flex-wrap: wrap; gap: 14px; margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); font-size: 0.72rem; }
+.auth-legal-links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.auth-legal-links a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
