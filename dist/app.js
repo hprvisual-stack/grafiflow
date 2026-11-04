@@ -1,5 +1,5 @@
 import { deriveOfflineEntitlement } from './offline-billing.js';
-import { conflictCopyId, shouldQueueLocalRecord } from './cloud-sync-policy.js';
+import { conflictCopyId, hasMeaningfulDraft, shouldQueueLocalRecord, shouldSyncDraft } from './cloud-sync-policy.js';
 import { legacyOwnerFromStorage, localDatabaseNameForOwner, UNOWNED_LEGACY_OWNER_MARKER } from './local-account-storage.js';
 
 const APP_VERSION = '1.3.0';
@@ -141,6 +141,7 @@ let savedCustomers = [];
 let selectedCustomerId = '';
 let computed = emptyComputed();
 let dbPromise;
+let draftClearIntent = false;
 let cloudSyncCompletion = Promise.resolve();
 let cloudSessionSetupPromise = Promise.resolve();
 let draftTimer;
@@ -473,49 +474,6 @@ async function queueCloudMutation(storeName, value, { recordId = '', recordType 
   cloudSyncChannel?.postMessage({ type: 'local-change', recordType: identity.type, recordId: identity.id });
 }
 
-function hasMeaningfulDraft(draftRecord) {
-  const draft = draftRecord?.value && typeof draftRecord.value === 'object' ? draftRecord.value : draftRecord;
-  if (!draft || typeof draft !== 'object') return false;
-  if (draft.quoteId || String(draft.quoteName || '').trim()) return true;
-
-  const client = draft.clientQuote || {};
-  if (['businessName', 'businessPhone', 'businessEmail', 'clientName', 'clientContact', 'clientEmail', 'clientDocument', 'clientAddress', 'notes'].some((key) => String(client[key] || '').trim())) return true;
-  if (client.validity && client.validity !== '7 dias') return true;
-  if (client.paymentTerms && client.paymentTerms !== '50% de entrada e saldo na entrega') return true;
-
-  if (Array.isArray(draft.materials) && draft.materials.some((material) => {
-    const name = String(material?.name || '').trim();
-    return (name && name !== 'Material principal' && !/^Material \d+$/.test(name))
-      || String(material?.supplier || '').trim()
-      || positive(material?.price) > 0
-      || positive(material?.heightCm) > 0
-      || material?.widthIsDefault === false
-      || (material?.calculationMode && material.calculationMode !== 'roll')
-      || (material?.basis && material.basis !== 'linear')
-      || material?.rotate === false
-      || Boolean(material?.laminationMaterialId)
-      || normalizeVolumePricing(material?.volumePricing).length > 0;
-  })) return true;
-
-  if (Array.isArray(draft.pieces) && draft.pieces.some((piece) => positive(piece?.widthCm) > 0 || positive(piece?.heightCm) > 0 || positive(piece?.quantity, 1) !== 1 || (piece?.description && piece.description !== 'Peça nova'))) return true;
-  if (positive(draft.globalBleed) > 0 || positive(draft.globalGap, 2) !== 2 || draft.optimize === false) return true;
-  if (positive(draft.salePrice) > 0 || positive(draft.otherCosts) > 0 || num(draft.targetMargin, 35) !== 35) return true;
-
-  const installation = draft.installation || {};
-  if ((installation.type && installation.type !== 'lona')
-    || (installation.basis && installation.basis !== 'm2')
-    || positive(installation.quantity) > 0
-    || positive(installation.unitPrice) > 0
-    || positive(installation.travel) > 0
-    || installation.autoQuantity === false
-    || (Array.isArray(installation.supplies) && installation.supplies.length > 0)) return true;
-  return false;
-}
-
-function shouldSyncDraft(draftRecord) {
-  return draftRecord?.cloudIntent === true || hasMeaningfulDraft(draftRecord);
-}
-
 async function deleteQueuedMutation(id) {
   const db = await openDatabase();
   if (db) await idbRequest(db.transaction('syncQueue', 'readwrite').objectStore('syncQueue').delete(id));
@@ -697,7 +655,6 @@ function applyAccountProfileToQuote() {
   }
   renderClientQuoteForm();
   renderClientQuotePreview();
-  persistDraftSoon();
 }
 
 async function loadAccountProfile(user = cloudSession?.user) {
@@ -1204,7 +1161,7 @@ async function synchronizeAllData() {
   try {
     clearTimeout(draftTimer);
     draftTimer = null;
-    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), cloudIntent: true });
+    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent });
     if (!cloudWorkspaceId) await getWorkspaceMembership();
     await queueLocalDataForFirstSync();
     await syncCloudNow();
@@ -1349,8 +1306,8 @@ async function localRecordTimestamp(recordType, recordId) {
 function cloudPayloadMatchesLocal(recordType, local, payload) {
   if (!local || !payload) return false;
   if (recordType === 'draft') {
-    return JSON.stringify({ value: local.value, cloudIntent: local.cloudIntent === true })
-      === JSON.stringify({ value: payload.value, cloudIntent: payload.cloudIntent === true });
+    return JSON.stringify(stableCloudValue(local.value)) === JSON.stringify(stableCloudValue(payload.value))
+      && (local.clearIntent === true) === (payload.clearIntent === true);
   }
   const stripSyncMetadata = (value) => {
     const copy = clone(value);
@@ -1370,8 +1327,8 @@ function stableCloudValue(value) {
 
 function cloudSyncPayloadsEqual(recordType, left, right) {
   if (recordType === 'draft') {
-    return JSON.stringify(stableCloudValue({ value: left?.value, cloudIntent: left?.cloudIntent === true }))
-      === JSON.stringify(stableCloudValue({ value: right?.value, cloudIntent: right?.cloudIntent === true }));
+    return JSON.stringify(stableCloudValue(left?.value)) === JSON.stringify(stableCloudValue(right?.value))
+      && (left?.clearIntent === true) === (right?.clearIntent === true);
   }
   const stripSyncMetadata = (value) => {
     if (!value || typeof value !== 'object') return value;
@@ -1387,6 +1344,7 @@ function cloudSyncPayloadsEqual(recordType, left, right) {
 
 async function preserveRejectedCloudMutation(item) {
   if (!item?.payload) return false;
+  if (item.recordType === 'draft' && !hasMeaningfulDraft(item.payload)) return false;
   const now = new Date().toISOString();
   const id = conflictCopyId(item);
   if (item.recordType === 'draft' && item.payload.value) {
@@ -1519,7 +1477,8 @@ async function applyCloudRecords(records) {
         cloudDeferredDraftRecord = record;
         continue;
       }
-      await storePut('settings', { key: 'draft', value: payload.value, updatedAt: record.updated_at, cloudIntent: payload.cloudIntent === true, _cloudVersionAt: record.updated_at, _cloudDirty: false }, { fromCloud: true });
+      await storePut('settings', { key: 'draft', value: payload.value, updatedAt: record.updated_at, clearIntent: payload.clearIntent === true, _cloudVersionAt: record.updated_at, _cloudDirty: false }, { fromCloud: true });
+      draftClearIntent = payload.clearIntent === true;
       cloudDraftDeferred = false;
       cloudDeferredDraftRecord = null;
       hydrateState(payload.value);
@@ -2353,6 +2312,7 @@ async function loadPersistence() {
       storeGetAll('quotes'),
       storeGetAll('customers'),
     ]);
+    draftClearIntent = draft?.clearIntent === true;
     if (draft?.value) hydrateState(draft.value, { inferDefaultText: !draft.value.quoteId });
     savedCatalogItems = materials.filter((item) => item.catalogCategory).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     savedMaterials = materials.filter((item) => !item.catalogCategory).map(normalizeMaterial);
@@ -2398,6 +2358,7 @@ function resetRuntimeForLocalOwner() {
   accountProfile = null;
   billingEntitlement = null;
   billingHistory = [];
+  draftClearIntent = false;
   cloudDraftDeferred = false;
   cloudDeferredDraftRecord = null;
   if (billingRefreshTimer) clearInterval(billingRefreshTimer);
@@ -2433,7 +2394,7 @@ async function switchLocalDataOwner(ownerId) {
       draftTimer = null;
       const currentCloudOwner = cloudSession?.user?.id || '';
       if (activeLocalDataOwner && (!currentCloudOwner || currentCloudOwner === activeLocalDataOwner)) {
-        await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), cloudIntent: true });
+        await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent });
         clearTimeout(cloudSyncTimer);
         cloudSyncTimer = null;
       }
@@ -2551,12 +2512,13 @@ function normalizeSupply(supply) {
   };
 }
 
-function persistDraftSoon() {
+function persistDraftSoon({ clearIntent = false } = {}) {
+  draftClearIntent = clearIntent;
   clearTimeout(draftTimer);
   draftTimer = setTimeout(async () => {
     draftTimer = null;
     try {
-      await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), cloudIntent: true });
+      await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent });
     } catch (error) {
       console.warn('Falha ao guardar rascunho local.', error);
     }
@@ -3992,7 +3954,8 @@ function resetCurrentCalculation({ empty = false, message = 'Novo cálculo pront
   state.salePrice = 0;
   state.otherCosts = 0;
   state.targetMargin = 35;
-  renderAll();
+  renderAll({ persistDraft: false });
+  persistDraftSoon({ clearIntent: true });
   switchView('calculator-view');
   showToast(message);
 }
@@ -4307,7 +4270,8 @@ async function importBackup(file) {
     if (Array.isArray(parsed.catalogItems)) savedCatalogItems = parsed.catalogItems.map((item) => ({ ...item, id: String(item.id).startsWith('catalog:') ? item.id : `catalog:${uid('item')}` }));
     if (Array.isArray(parsed.quotes)) savedQuotes = parsed.quotes;
     if (Array.isArray(parsed.customers)) savedCustomers = parsed.customers;
-    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), cloudIntent: true });
+    draftClearIntent = false;
+    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: false });
     for (const material of savedMaterials) await storePut('materials', material);
     for (const item of savedCatalogItems) await storePut('materials', item);
     for (const quote of savedQuotes) await storePut('quotes', quote);
