@@ -17,11 +17,12 @@ const AUTH_REQUEST_TIMEOUT_MS = 20000;
 
 function legacyLocalDataOwner() {
   try {
-    const knownOwner = localStorage.getItem(CLOUD_OWNER_KEY) || readCloudSession()?.user?.id || '';
     const storedMarker = localStorage.getItem(LEGACY_LOCAL_OWNER_KEY);
-    const owner = legacyOwnerFromStorage(storedMarker, knownOwner);
-    if (storedMarker === null) localStorage.setItem(LEGACY_LOCAL_OWNER_KEY, owner || UNOWNED_LEGACY_OWNER_MARKER);
-    return owner;
+    if (storedMarker === null) {
+      localStorage.setItem(LEGACY_LOCAL_OWNER_KEY, UNOWNED_LEGACY_OWNER_MARKER);
+      return '';
+    }
+    return legacyOwnerFromStorage(storedMarker);
   } catch {
     return '';
   }

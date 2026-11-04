@@ -1,8 +1,8 @@
 export const UNOWNED_LEGACY_OWNER_MARKER = '__unowned__';
 
-export function legacyOwnerFromStorage(storedMarker, currentOwner) {
+export function legacyOwnerFromStorage(storedMarker) {
   if (storedMarker !== null) return storedMarker === UNOWNED_LEGACY_OWNER_MARKER ? '' : storedMarker;
-  return currentOwner || '';
+  return '';
 }
 
 export function localDatabaseNameForOwner(ownerId, legacyOwnerId, baseName = 'nesto-local-v1') {
