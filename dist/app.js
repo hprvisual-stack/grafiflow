@@ -1,4 +1,5 @@
 import { deriveOfflineEntitlement } from './offline-billing.js';
+import { conflictCopyId, shouldQueueLocalRecord } from './cloud-sync-policy.js';
 
 const APP_VERSION = '1.3.0';
 const DB_NAME = 'nesto-local-v1';
@@ -137,6 +138,7 @@ let cloudSyncChannel = null;
 let cloudPollTimer = null;
 let cloudDraftDeferred = false;
 let cloudDraftFocusoutTimer = null;
+let cloudDeferredDraftRecord = null;
 let fullSyncRunning = false;
 let authMode = 'login';
 let authNotice = '';
@@ -328,10 +330,11 @@ async function storePut(storeName, value, { fromCloud = false } = {}) {
       ...value,
       _syncUpdatedAt: new Date().toISOString(),
       _cloudVersionAt: value._cloudVersionAt || existing?._cloudVersionAt || null,
+      _cloudDirty: true,
     };
   } else if (!fromCloud && storeName === 'settings' && value?.key === 'draft') {
     const existing = await storeGet(storeName, value.key);
-    storedValue = { ...value, _cloudVersionAt: value._cloudVersionAt || existing?._cloudVersionAt || null };
+    storedValue = { ...value, _cloudVersionAt: value._cloudVersionAt || existing?._cloudVersionAt || null, _cloudDirty: true };
   }
   const transaction = db.transaction(storeName, 'readwrite');
   await idbRequest(transaction.objectStore(storeName).put(storedValue));
@@ -424,7 +427,10 @@ async function queueCloudMutation(storeName, value, { recordId = '', recordType 
     ? existing.baseUpdatedAt
     : baseUpdatedAt || value?._cloudVersionAt || null;
   const payload = deleted ? null : clone(value);
-  if (payload && typeof payload === 'object') delete payload._cloudVersionAt;
+  if (payload && typeof payload === 'object') {
+    delete payload._cloudVersionAt;
+    delete payload._cloudDirty;
+  }
   const transaction = db.transaction('syncQueue', 'readwrite');
   await idbRequest(transaction.objectStore('syncQueue').put({
     id: queueId,
@@ -1210,8 +1216,17 @@ function scheduleDeferredDraftSync() {
   cloudDraftFocusoutTimer = setTimeout(() => {
     cloudDraftFocusoutTimer = null;
     if (!cloudDraftDeferred || hasFocusedEditor()) return;
+    const deferredRecord = cloudDeferredDraftRecord;
+    cloudDeferredDraftRecord = null;
     cloudDraftDeferred = false;
-    syncAfterWake();
+    if (!deferredRecord) {
+      syncAfterWake();
+      return;
+    }
+    void applyCloudRecords([deferredRecord]).then((stillDeferred) => {
+      if (stillDeferred) cloudDeferredDraftRecord = deferredRecord;
+      else syncAfterWake();
+    }).catch((error) => updateAccountStatus(error.message || 'Não foi possível aplicar a versão remota do rascunho.'));
   }, 450);
 }
 
@@ -1260,13 +1275,24 @@ async function queueLocalDataForFirstSync() {
   const queueIsNewer = queuedDraft && (!draft || (new Date(queuedDraft.updatedAt).getTime() > new Date(draft.updatedAt || 0).getTime()));
   const draftForSync = queueIsNewer ? queuedDraft.payload : draft;
   if (shouldSyncDraft(draftForSync)) {
-    if (draftForSync && (!queuedDraft || !queueIsNewer)) await queueCloudMutation('settings', draftForSync);
+    if (queueIsNewer) {
+      // Keep the newer queued edit intact.
+    } else if (shouldQueueLocalRecord(draftForSync)) {
+      await queueCloudMutation('settings', draftForSync);
+    } else if (queuedDraft) {
+      await deleteQueuedMutation(queuedDraft.id);
+    }
   } else if (queuedDraft) {
     await deleteQueuedMutation(queuedDraft.id);
   }
-  for (const material of materials) await queueCloudMutation('materials', material);
-  for (const quote of quotes) await queueCloudMutation('quotes', quote);
-  for (const customer of customers) await queueCloudMutation('customers', customer);
+  for (const [storeName, records] of [['materials', materials], ['quotes', quotes], ['customers', customers]]) {
+    for (const record of records) {
+      const identity = recordIdentity(storeName, record);
+      if (!identity || !shouldQueueLocalRecord(record)) continue;
+      const queued = await storeGet('syncQueue', `${identity.type}:${identity.id}`);
+      if (!queued) await queueCloudMutation(storeName, record);
+    }
+  }
 }
 
 async function localRecordTimestamp(recordType, recordId) {
@@ -1299,6 +1325,7 @@ function cloudPayloadMatchesLocal(recordType, local, payload) {
     const copy = clone(value);
     delete copy._syncUpdatedAt;
     delete copy._cloudVersionAt;
+    delete copy._cloudDirty;
     return JSON.stringify(copy);
   };
   return stripSyncMetadata(local) === stripSyncMetadata(payload);
@@ -1320,6 +1347,7 @@ function cloudSyncPayloadsEqual(recordType, left, right) {
     const copy = clone(value);
     delete copy._syncUpdatedAt;
     delete copy._cloudVersionAt;
+    delete copy._cloudDirty;
     delete copy.updatedAt;
     return stableCloudValue(copy);
   };
@@ -1329,9 +1357,10 @@ function cloudSyncPayloadsEqual(recordType, left, right) {
 async function preserveRejectedCloudMutation(item) {
   if (!item?.payload) return false;
   const now = new Date().toISOString();
+  const id = conflictCopyId(item);
   if (item.recordType === 'draft' && item.payload.value) {
+    if (await storeGet('quotes', id)) return true;
     const snapshot = clone(item.payload.value);
-    const id = uid('quote-conflict');
     const name = `Cópia de conflito — rascunho ${new Date().toLocaleString('pt-BR')}`;
     snapshot.quoteId = id;
     snapshot.quoteName = name;
@@ -1346,7 +1375,7 @@ async function preserveRejectedCloudMutation(item) {
     return true;
   }
   if (item.recordType === 'quote') {
-    const id = uid('quote-conflict');
+    if (await storeGet('quotes', id)) return true;
     const quote = {
       ...clone(item.payload), id,
       name: `Cópia de conflito — ${item.payload.name || 'Orçamento sem nome'}`,
@@ -1361,7 +1390,8 @@ async function preserveRejectedCloudMutation(item) {
   if ((item.recordType === 'material' || catalogCategoryFromRecordType(item.recordType)) && item.payload.id) {
     const original = item.payload;
     const isCatalogItem = isCatalogRecord(item.recordType, original) || String(item.recordId).startsWith('catalog:');
-    const id = isCatalogItem ? `catalog:${uid('conflict')}` : uid('material-conflict');
+    const id = isCatalogItem ? `catalog:${conflictCopyId(item)}` : conflictCopyId(item);
+    if (await storeGet('materials', id)) return true;
     const copy = { ...clone(original), id, name: `Cópia de conflito — ${original.name || 'Material'}`, updatedAt: now, isConflictCopy: true };
     await storePut('materials', copy);
     if (isCatalogItem) {
@@ -1374,9 +1404,10 @@ async function preserveRejectedCloudMutation(item) {
     return true;
   }
   if (item.recordType === 'customer' && item.payload.id) {
+    if (await storeGet('customers', id)) return true;
     const customer = {
       ...clone(item.payload),
-      id: uid('customer-conflict'),
+      id,
       name: `Cópia de conflito — ${item.payload.name || 'Cliente'}`,
       updatedAt: now,
       isConflictCopy: true,
@@ -1414,11 +1445,13 @@ async function applyCloudRecords(records) {
       if (record.record_type === 'draft' && (draftTimer || hasFocusedEditor())) {
         draftDeferred = true;
         cloudDraftDeferred = true;
+        cloudDeferredDraftRecord = record;
         continue;
       }
       await storeDelete(storeName, localId, { fromCloud: true });
       if (record.record_type === 'draft') {
         cloudDraftDeferred = false;
+        cloudDeferredDraftRecord = null;
         draftChanged = true;
       }
       if (record.record_type === 'material') {
@@ -1442,8 +1475,8 @@ async function applyCloudRecords(records) {
     }
     const payload = record.payload;
     if (cloudPayloadMatchesLocal(record.record_type, local, payload)) {
-      if (local && local._cloudVersionAt !== record.updated_at) {
-        await storePut(storeName, { ...local, _cloudVersionAt: record.updated_at }, { fromCloud: true });
+      if (local && (local._cloudVersionAt !== record.updated_at || local._cloudDirty)) {
+        await storePut(storeName, { ...local, _cloudVersionAt: record.updated_at, _cloudDirty: false }, { fromCloud: true });
       }
       continue;
     }
@@ -1452,15 +1485,17 @@ async function applyCloudRecords(records) {
       if (draftTimer || hasFocusedEditor()) {
         draftDeferred = true;
         cloudDraftDeferred = true;
+        cloudDeferredDraftRecord = record;
         continue;
       }
-      await storePut('settings', { key: 'draft', value: payload.value, updatedAt: record.updated_at, cloudIntent: payload.cloudIntent === true, _cloudVersionAt: record.updated_at }, { fromCloud: true });
+      await storePut('settings', { key: 'draft', value: payload.value, updatedAt: record.updated_at, cloudIntent: payload.cloudIntent === true, _cloudVersionAt: record.updated_at, _cloudDirty: false }, { fromCloud: true });
       cloudDraftDeferred = false;
+      cloudDeferredDraftRecord = null;
       hydrateState(payload.value);
       draftChanged = true;
     } else if (isCatalogItem && (payload?.catalogCategory || catalogCategory)) {
       const category = payload?.catalogCategory || catalogCategory;
-      const item = { ...payload, catalogCategory: category, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at };
+      const item = { ...payload, catalogCategory: category, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('materials', item, { fromCloud: true });
       savedCatalogItems = [item, ...savedCatalogItems.filter((entry) => entry.id !== record.record_id)].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       catalogChanged = true;
@@ -1468,17 +1503,17 @@ async function applyCloudRecords(records) {
         await queueCloudMutation('materials', item);
       }
     } else if (record.record_type === 'material' && payload?.id) {
-      const material = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at };
+      const material = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('materials', material, { fromCloud: true });
       savedMaterials = [normalizeMaterial(material), ...savedMaterials.filter((item) => item.id !== record.record_id)];
       materialsChanged = true;
     } else if (record.record_type === 'quote' && payload?.id) {
-      const quote = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at };
+      const quote = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('quotes', quote, { fromCloud: true });
       savedQuotes = [quote, ...savedQuotes.filter((item) => item.id !== record.record_id)].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
       quotesChanged = true;
     } else if (record.record_type === 'customer' && payload?.id) {
-      const customer = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at };
+      const customer = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('customers', customer, { fromCloud: true });
       savedCustomers = [customer, ...savedCustomers.filter((item) => item.id !== record.record_id)].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       customersChanged = true;
@@ -1642,6 +1677,7 @@ async function syncCloudNow() {
     }));
     const conflictItems = [];
     const conflictedDeletes = [];
+    const confirmedRows = [];
     for (let index = 0; index < changes.length; index += 100) {
       const batch = queue.slice(index, index + 100);
       const syncedRows = await cloudFetch('/rest/v1/rpc/sync_grafiflow_records', {
@@ -1649,6 +1685,7 @@ async function syncCloudNow() {
         body: { target_workspace_id: cloudWorkspaceId, changes: changes.slice(index, index + 100) },
       });
       if (!Array.isArray(syncedRows)) throw new Error('O Supabase não confirmou as alterações enviadas. A fila local foi preservada.');
+      confirmedRows.push(...syncedRows);
       const rowsByKey = new Map(syncedRows.map((row) => [`${row.record_type}:${row.record_id}`, row]));
       for (const item of batch) {
         const serverRecordType = serverRecordTypeForMutation(item, supportsTypedCatalog);
@@ -1676,6 +1713,7 @@ async function syncCloudNow() {
       if (!completedQueueIds.has(item.id)) continue;
       if (await preserveRejectedCloudMutation(item)) preservedConflicts += 1;
     }
+    if (confirmedRows.length) await applyCloudRecords(confirmedRows);
     if (supportsTypedCatalog) await downloadIncrementalCloudChanges(session);
     else await downloadFullCloudSnapshot(session);
     if (preservedConflicts) {

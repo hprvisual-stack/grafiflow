@@ -1,10 +1,11 @@
-const CACHE_NAME = 'grafiflow-static-v49';
+const CACHE_NAME = 'grafiflow-static-v50';
 const APP_SHELL = [
   './',
   './index.html',
   './styles.css?v=20261103-metriflow-rebrand',
   './app.js?v=20261103-metriflow-rebrand',
   './offline-billing.js',
+  './cloud-sync-policy.js',
   './api/config?v=20261103-metriflow-rebrand',
   './manifest.webmanifest?v=20261103-metriflow-rebrand',
   './metriflow-favicon.png',
