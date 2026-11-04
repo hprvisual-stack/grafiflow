@@ -259,17 +259,11 @@
                 <label class="field" id="auth-password-confirm-field" hidden><span>Confirme sua senha</span><div class="auth-input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="m9 15 2 2 4-4"></path></svg><input id="auth-password-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Digite a senha novamente" /><button class="password-visibility-toggle" type="button" data-password-target="auth-password-confirm" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></div></label>
                 <button class="primary-button account-submit" id="auth-submit" type="submit">Entrar no MetriFlow</button>
               </form>
-              <section id="account-mismatch-choice" class="account-mismatch-choice" aria-labelledby="account-mismatch-title" hidden>
-                <h3 id="account-mismatch-title">Mesclar dados deste tablet?</h3>
-                <p>Esta conta foi autenticada, mas os dados locais do tablet estão vinculados a outro usuário. Ao continuar, o MetriFlow enviará o orçamento atual, materiais e catálogo, orçamentos salvos e alterações pendentes para esta conta. Registros diferentes que já existam na nuvem serão mantidos; conflitos serão guardados como cópias. A conta antiga na nuvem não será alterada.</p>
-                <button class="primary-button account-submit" id="confirm-account-data-merge" type="button">Mesclar dados locais nesta conta</button>
-                <button class="text-button" id="cancel-account-data-merge" type="button">Cancelar e manter os dados neste tablet</button>
-              </section>
               <div class="account-modal-actions" id="account-modal-actions">
                 <button class="text-button" id="auth-forgot-button" type="button">Esqueci minha senha</button>
                 <button class="text-button" id="auth-mode-toggle" type="button">Criar conta</button>
               </div>
-              <p class="auth-sync-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="15" height="11" rx="2"></rect><path d="M7 20h6m-3-4v4"></path><rect x="16" y="10" width="5.5" height="10" rx="1.2"></rect></svg><span>Sua conta sincroniza seus dados entre dispositivos.</span></p>
+              <p class="auth-sync-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="15" height="11" rx="2"></rect><path d="M7 20h6m-3-4v4"></path><rect x="16" y="10" width="5.5" height="10" rx="1.2"></rect></svg><span>Seus dados sincronizam entre seus dispositivos. Cada conta mantém um espaço separado neste aparelho.</span></p>
               <nav class="auth-legal-links" aria-label="Documentos legais"><a href="/termos-de-uso/">Termos de uso</a><a href="/politica-de-privacidade/">Política de privacidade</a></nav>
             </div>
             <form id="recovery-request-form" class="account-auth-form" hidden>
@@ -415,6 +409,6 @@
       </div>
     </div>
     <script src="./api/config?v=20261103-metriflow-rebrand"></script>
-    <script type="module" src="./app.js?v=20261103-metriflow-rebrand"></script>
+    <script type="module" src="./app.js?v=20261103-account-isolation"></script>
   </body>
 </html>

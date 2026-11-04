@@ -1,5 +1,6 @@
 import { deriveOfflineEntitlement } from './offline-billing.js';
 import { conflictCopyId, shouldQueueLocalRecord } from './cloud-sync-policy.js';
+import { legacyOwnerFromStorage, localDatabaseNameForOwner, UNOWNED_LEGACY_OWNER_MARKER } from './local-account-storage.js';
 
 const APP_VERSION = '1.3.0';
 const DB_NAME = 'nesto-local-v1';
@@ -7,11 +8,37 @@ const DB_VERSION = 3;
 const CLOUD_SESSION_KEY = 'grafiflow.auth.v1';
 const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
+const LEGACY_LOCAL_OWNER_KEY = 'metriflow.local.legacy-owner.v1';
 const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v1';
 const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
 const MAX_ROLL_LENGTH_MM = 50000;
 const MAX_LAYOUT_PIECES_PER_MATERIAL = 1000;
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
+
+function legacyLocalDataOwner() {
+  try {
+    const knownOwner = localStorage.getItem(CLOUD_OWNER_KEY) || readCloudSession()?.user?.id || '';
+    const storedMarker = localStorage.getItem(LEGACY_LOCAL_OWNER_KEY);
+    const owner = legacyOwnerFromStorage(storedMarker, knownOwner);
+    if (storedMarker === null) localStorage.setItem(LEGACY_LOCAL_OWNER_KEY, owner || UNOWNED_LEGACY_OWNER_MARKER);
+    return owner;
+  } catch {
+    return '';
+  }
+}
+
+function storedLocalDataOwner() {
+  try {
+    return localStorage.getItem(CLOUD_OWNER_KEY) || readCloudSession()?.user?.id || legacyLocalDataOwner();
+  } catch {
+    return '';
+  }
+}
+
+const LEGACY_LOCAL_DATA_OWNER = legacyLocalDataOwner();
+let activeLocalDataOwner = storedLocalDataOwner();
+let activeLocalDatabaseName = localDatabaseNameForOwner(activeLocalDataOwner, LEGACY_LOCAL_DATA_OWNER, DB_NAME);
+let localOwnerSwitching = false;
 const CATALOG_RECORD_TYPES = Object.freeze({
   finish: 'catalog_finish',
   supply: 'catalog_supply',
@@ -113,6 +140,8 @@ let savedCustomers = [];
 let selectedCustomerId = '';
 let computed = emptyComputed();
 let dbPromise;
+let cloudSyncCompletion = Promise.resolve();
+let cloudSessionSetupPromise = Promise.resolve();
 let draftTimer;
 let quoteCalculationTimer;
 let deferredInstallPrompt = null;
@@ -126,8 +155,6 @@ let billingCountdownTimer = null;
 let billingRefreshTimer = null;
 let billingDeadlineTimer = null;
 let billingClockAnchor = null;
-let pendingCloudAccountSwitch = null;
-let cloudAccountSwitchRunning = false;
 let cloudSessionSetupRunning = false;
 let cloudIncrementalSyncAvailable = null;
 let cloudSyncCapabilityCheckedAt = 0;
@@ -284,7 +311,7 @@ function openDatabase() {
   if (dbPromise) return dbPromise;
   if (!('indexedDB' in window) || !window.indexedDB) return Promise.resolve(null);
   dbPromise = new Promise((resolve, reject) => {
-    const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+    const request = window.indexedDB.open(activeLocalDatabaseName, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains('quotes')) db.createObjectStore('quotes', { keyPath: 'id' });
@@ -1268,6 +1295,9 @@ async function getWorkspaceMembership() {
 }
 
 async function queueLocalDataForFirstSync() {
+  if (!cloudSession?.user?.id || cloudSession.user.id !== activeLocalDataOwner) {
+    throw new Error('Os dados locais não correspondem à conta conectada. Entre novamente para sincronizar com segurança.');
+  }
   const [draft, materials, quotes, customers] = await Promise.all([
     storeGet('settings', 'draft'), storeGetAll('materials'), storeGetAll('quotes'), storeGetAll('customers'),
   ]);
@@ -1641,8 +1671,12 @@ async function downloadIncrementalCloudChanges(session) {
   }
 }
 
+async function waitForCloudSyncToFinish() {
+  while (cloudSyncRunning) await cloudSyncCompletion;
+}
+
 async function syncCloudNow() {
-  if (!cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
+  if (localOwnerSwitching || !cloudSession || cloudSession.user?.id !== activeLocalDataOwner || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
   if (!cloudWorkspaceId) {
     restoreCloudAccount();
     return;
@@ -1652,6 +1686,8 @@ async function syncCloudNow() {
     return;
   }
   cloudSyncRunning = true;
+  let finishSync;
+  cloudSyncCompletion = new Promise((resolve) => { finishSync = resolve; });
   let syncSucceeded = false;
   updateAccountStatus('Sincronizando…');
   try {
@@ -1735,36 +1771,22 @@ async function syncCloudNow() {
     cloudSyncRequested = false;
     if (syncSucceeded) updateAccountStatus('Sincronizado');
     if (syncSucceeded && (pending.length || requested)) scheduleCloudSync();
+    finishSync?.();
   }
 }
 
 async function activateCloudSession(session, { backgroundSync = false } = {}) {
   const nextSession = { ...session, expires_at: session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600) };
   const ownerId = nextSession.user?.id || '';
-  let localOwner = '';
-  try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
-  if (localOwner && ownerId && localOwner !== ownerId) {
-    cloudWorkspaceId = '';
-    let previousWorkspace = '';
-    try { previousWorkspace = localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { /* armazenamento local opcional */ }
-    pendingCloudAccountSwitch = { session: nextSession, previousOwner: localOwner, previousWorkspace };
-    authMode = 'login';
-    authNotice = `A conta ${nextSession.user?.email || 'informada'} foi autenticada, mas este tablet mantém dados locais vinculados a outra conta.`;
-    renderAuthMode();
-    updateAccountStatus(authNotice);
-    return false;
-  }
+  if (ownerId) await switchLocalDataOwner(ownerId);
   saveCloudSession(nextSession);
-  if (!localOwner && ownerId) {
-    try { localStorage.setItem(CLOUD_OWNER_KEY, ownerId); } catch { /* armazenamento local opcional */ }
-  }
   if (!navigator.onLine) {
     updateAccountStatus('Conta disponível offline');
     return true;
   }
   if (backgroundSync) {
     cloudSessionSetupRunning = true;
-    void (async () => {
+    cloudSessionSetupPromise = (async () => {
       try {
         await loadAccountProfile();
         await getWorkspaceMembership();
@@ -1794,92 +1816,13 @@ async function activateCloudSession(session, { backgroundSync = false } = {}) {
   return true;
 }
 
-async function confirmLocalAccountMerge() {
-  const pending = pendingCloudAccountSwitch;
-  if (!pending || cloudAccountSwitchRunning) return;
-  const confirmButton = document.getElementById('confirm-account-data-merge');
-  const cancelButton = document.getElementById('cancel-account-data-merge');
-  cloudAccountSwitchRunning = true;
-  if (confirmButton) { confirmButton.disabled = true; confirmButton.textContent = 'Mesclando…'; }
-  if (cancelButton) cancelButton.disabled = true;
-  authNotice = 'Vinculando os dados locais à conta nova…';
-  updateAccountStatus(authNotice);
-  let localBindingUpdated = false;
-  try {
-    const currentOwner = localStorage.getItem(CLOUD_OWNER_KEY) || '';
-    if (currentOwner !== pending.previousOwner) {
-      throw new Error('O vínculo local mudou desde o login. Feche e abra o MetriFlow antes de tentar novamente.');
-    }
-    const newOwner = pending.session.user?.id || '';
-    if (!newOwner || newOwner === pending.previousOwner) throw new Error('Não foi possível validar o usuário da nova conta.');
-    try {
-      localStorage.removeItem(CLOUD_WORKSPACE_KEY);
-      localStorage.setItem(CLOUD_OWNER_KEY, newOwner);
-      localBindingUpdated = true;
-    } catch {
-      if (pending.previousWorkspace) localStorage.setItem(CLOUD_WORKSPACE_KEY, pending.previousWorkspace);
-      throw new Error('Não foi possível atualizar o vínculo local do tablet. Os dados continuam preservados; tente novamente.');
-    }
-    cloudWorkspaceId = '';
-    cloudWorkspaceName = '';
-    const activated = await activateCloudSession(pending.session, { backgroundSync: true });
-    if (!activated) throw new Error(authNotice || 'Não foi possível vincular esta conta.');
-    pendingCloudAccountSwitch = null;
-    authMode = 'account';
-    authNotice = '';
-    document.getElementById('account-auth-form')?.reset();
-    setAuthAccessUI(true);
-    showToast(navigator.onLine
-      ? 'Conta conectada. A mesclagem dos dados locais começou em segundo plano.'
-      : 'Conta conectada. Os dados locais serão mesclados quando houver internet.');
-  } catch (error) {
-    const newOwner = pending.session.user?.id || '';
-    if (newOwner && cloudSession?.user?.id === newOwner) saveCloudSession(null);
-    if (localBindingUpdated) {
-      try {
-        localStorage.setItem(CLOUD_OWNER_KEY, pending.previousOwner);
-        if (pending.previousWorkspace) localStorage.setItem(CLOUD_WORKSPACE_KEY, pending.previousWorkspace);
-        else localStorage.removeItem(CLOUD_WORKSPACE_KEY);
-      } catch { /* os dados permanecem locais para nova tentativa */ }
-    }
-    cloudWorkspaceId = '';
-    cloudWorkspaceName = '';
-    pendingCloudAccountSwitch = pending;
-    authNotice = error.message || 'Não foi possível iniciar a mesclagem. Os dados locais foram preservados.';
-    showToast(authNotice, 'error');
-  } finally {
-    cloudAccountSwitchRunning = false;
-    if (confirmButton) { confirmButton.disabled = false; confirmButton.textContent = 'Mesclar dados locais nesta conta'; }
-    if (cancelButton) cancelButton.disabled = false;
-    renderAuthMode();
-    updateAccountStatus();
-  }
-}
-
-function cancelLocalAccountMerge() {
-  if (!pendingCloudAccountSwitch || cloudAccountSwitchRunning) return;
-  pendingCloudAccountSwitch = null;
-  authNotice = 'Mesclagem cancelada. Os dados locais foram mantidos neste tablet.';
-  renderAuthMode();
-  updateAccountStatus(authNotice);
-}
-
 async function restoreCloudAccount({ backgroundSetup = false } = {}) {
   const saved = readCloudSession();
   if (!saved?.access_token) return false;
+  if (saved.user?.id) await switchLocalDataOwner(saved.user.id);
   cloudWorkspaceId = (() => { try { return localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { return ''; } })();
   let localOwner = '';
   try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
-  if (localOwner && saved.user?.id && localOwner !== saved.user.id) {
-    cloudWorkspaceId = '';
-    saveCloudSession(null);
-    authMode = 'login';
-    authNotice = 'A sessão salva não corresponde aos dados deste tablet. Entre na conta desejada para continuar.';
-    renderAuthMode();
-    updateAccountStatus(authNotice);
-    setAuthAccessUI(false);
-    return false;
-  }
   saveCloudSession(saved);
   if (!cloudConfigured() || !navigator.onLine) {
     updateAccountStatus(navigator.onLine ? 'Configure o Supabase para sincronizar' : 'Conta disponível offline');
@@ -1891,15 +1834,10 @@ async function restoreCloudAccount({ backgroundSetup = false } = {}) {
     const session = await usableCloudSession();
     const user = await cloudFetch('/auth/v1/user', { token: session.access_token, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
     authVerified = true;
-    if (localOwner && user?.id && localOwner !== user.id) {
-      saveCloudSession(null);
+    if (user?.id && localOwner !== user.id) {
+      await switchLocalDataOwner(user.id);
+      localOwner = user.id;
       cloudWorkspaceId = '';
-      authMode = 'login';
-      authNotice = 'A sessão salva não corresponde aos dados deste tablet. Entre na conta desejada para continuar.';
-      renderAuthMode();
-      updateAccountStatus(authNotice);
-      setAuthAccessUI(false);
-      return false;
     }
     saveCloudSession({ ...session, user });
     await loadAccountProfile(user);
@@ -1934,7 +1872,6 @@ function updateAccountStatus(message = '') {
   const status = document.getElementById('account-modal-status');
   const configured = cloudConfigured();
   const signedIn = Boolean(cloudSession?.user?.email || cloudSession?.user?.id);
-  const accountSwitchPending = Boolean(pendingCloudAccountSwitch) && !signedIn;
   const authGateActive = document.body.classList.contains('auth-gate-active') || document.body.classList.contains('auth-pending');
   const manualSync = document.getElementById('manual-sync-button');
   if (manualSync) manualSync.disabled = !configured || !navigator.onLine || cloudSyncRunning || fullSyncRunning;
@@ -1956,19 +1893,15 @@ function updateAccountStatus(message = '') {
     syncNow.disabled = !navigator.onLine || cloudSyncRunning || fullSyncRunning || !cloudWorkspaceId;
   }
   const submit = document.getElementById('auth-submit');
-  if (submit) submit.disabled = signedIn || accountSwitchPending || !configured;
+  if (submit) submit.disabled = signedIn || !configured;
   const toggle = document.getElementById('auth-mode-toggle');
-  if (toggle) toggle.hidden = signedIn || accountSwitchPending;
+  if (toggle) toggle.hidden = signedIn;
   const forgot = document.getElementById('auth-forgot-button');
-  if (forgot) forgot.hidden = signedIn || accountSwitchPending;
+  if (forgot) forgot.hidden = signedIn;
   const form = document.getElementById('account-auth-form');
-  if (form) form.hidden = signedIn || accountSwitchPending;
-  const switchChoice = document.getElementById('account-mismatch-choice');
-  if (switchChoice) switchChoice.hidden = !accountSwitchPending;
+  if (form) form.hidden = signedIn;
   const modalActions = document.getElementById('account-modal-actions');
-  if (modalActions) modalActions.hidden = signedIn || accountSwitchPending;
-  const syncNote = document.querySelector('.auth-sync-note');
-  if (syncNote) syncNote.hidden = accountSwitchPending;
+  if (modalActions) modalActions.hidden = signedIn;
 }
 
 function updateAuthPasswordConfirmation() {
@@ -2013,9 +1946,8 @@ function renderAuthMode() {
   updateAuthPasswordConfirmation();
   if (submit) submit.textContent = creating ? 'Criar conta' : 'Entrar no MetriFlow';
   if (toggle) toggle.textContent = creating ? 'Já tenho uma conta' : 'Criar conta';
-  const accountSwitchPending = Boolean(pendingCloudAccountSwitch) && !cloudSession?.user;
-  if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user) || accountSwitchPending;
-  if (forgot) forgot.hidden = authMode !== 'login' || Boolean(cloudSession?.user) || accountSwitchPending;
+  if (toggle) toggle.hidden = !authView || Boolean(cloudSession?.user);
+  if (forgot) forgot.hidden = authMode !== 'login' || Boolean(cloudSession?.user);
   if (title) {
     const titles = {
       login: 'Acesse o MetriFlow',
@@ -2358,6 +2290,7 @@ async function handleAuthCallback() {
       token_type: params.get('token_type') || 'bearer',
     };
     session.user = await cloudFetch('/auth/v1/user', { token: accessToken });
+    if (session.user?.id) await switchLocalDataOwner(session.user.id);
     saveCloudSession(session);
     if (type === 'recovery') {
       await loadAccountProfile(session.user);
@@ -2437,6 +2370,97 @@ async function loadPersistence() {
   } catch (error) {
     console.warn('Não foi possível abrir o armazenamento local.', error);
     showToast('O cálculo funciona, mas o armazenamento local não pôde ser aberto.', 'error');
+  }
+}
+
+function resetRuntimeForLocalOwner() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  state.appVersion = APP_VERSION;
+  state.quoteId = null;
+  state.quoteName = '';
+  state.clientQuote = defaultClientQuote();
+  state.materials = [defaultMaterial()];
+  state.pieces = [];
+  state.globalBleed = 0;
+  state.globalGap = 2;
+  state.optimize = true;
+  state.installation = { type: 'lona', basis: 'm2', quantity: 0, unitPrice: 0, travel: 0, autoQuantity: true, supplies: [] };
+  state.salePrice = 0;
+  state.otherCosts = 0;
+  state.targetMargin = 35;
+  savedMaterials = [];
+  savedCatalogItems = [];
+  savedQuotes = [];
+  savedCustomers = [];
+  selectedCustomerId = '';
+  accountProfile = null;
+  billingEntitlement = null;
+  billingHistory = [];
+  cloudDraftDeferred = false;
+  cloudDeferredDraftRecord = null;
+  if (billingRefreshTimer) clearInterval(billingRefreshTimer);
+  if (billingDeadlineTimer) clearInterval(billingDeadlineTimer);
+  if (billingCountdownTimer) clearInterval(billingCountdownTimer);
+  billingRefreshTimer = null;
+  billingDeadlineTimer = null;
+  billingCountdownTimer = null;
+}
+
+async function switchLocalDataOwner(ownerId) {
+  if (!ownerId) return false;
+  const nextDatabaseName = localDatabaseNameForOwner(ownerId, LEGACY_LOCAL_DATA_OWNER, DB_NAME);
+  const alreadySelected = activeLocalDataOwner === ownerId && activeLocalDatabaseName === nextDatabaseName;
+  let previousOwner = null;
+  try { previousOwner = localStorage.getItem(CLOUD_OWNER_KEY); } catch { /* recuperação local opcional */ }
+  try {
+    localStorage.setItem(CLOUD_OWNER_KEY, ownerId);
+  } catch {
+    throw new Error('Não foi possível selecionar o armazenamento local desta conta neste aparelho.');
+  }
+  if (alreadySelected) return false;
+
+  localOwnerSwitching = true;
+  setAuthAccessUI(false);
+  try {
+    await cloudSessionSetupPromise.catch(() => undefined);
+    await waitForCloudSyncToFinish();
+    clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = null;
+    if (draftTimer) {
+      clearTimeout(draftTimer);
+      draftTimer = null;
+      const currentCloudOwner = cloudSession?.user?.id || '';
+      if (activeLocalDataOwner && (!currentCloudOwner || currentCloudOwner === activeLocalDataOwner)) {
+        await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), cloudIntent: true });
+        clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = null;
+      }
+    }
+
+    const currentDb = dbPromise ? await dbPromise.catch(() => null) : null;
+    currentDb?.close();
+    dbPromise = null;
+    activeLocalDataOwner = ownerId;
+    activeLocalDatabaseName = nextDatabaseName;
+    cloudWorkspaceId = '';
+    cloudWorkspaceName = '';
+    try { localStorage.removeItem(CLOUD_WORKSPACE_KEY); } catch { /* será consultado novamente após o login */ }
+    resetRuntimeForLocalOwner();
+    await loadPersistence();
+    if (!state.pieces.length) state.pieces.push(defaultPiece(state.materials[0]?.id));
+    renderAll({ persistDraft: false });
+    return true;
+  } catch (error) {
+    if (activeLocalDataOwner !== ownerId) {
+      try {
+        if (previousOwner === null) localStorage.removeItem(CLOUD_OWNER_KEY);
+        else localStorage.setItem(CLOUD_OWNER_KEY, previousOwner);
+      } catch { /* o próximo login selecionará novamente o banco da conta */ }
+    }
+    throw error;
+  } finally {
+    localOwnerSwitching = false;
   }
 }
 
@@ -4710,8 +4734,6 @@ function initialize() {
   document.getElementById('catalog-item-form')?.addEventListener('submit', submitCatalogItem);
   document.getElementById('customer-form')?.addEventListener('submit', submitCustomer);
   document.getElementById('account-auth-form')?.addEventListener('submit', submitCloudAuth);
-  document.getElementById('confirm-account-data-merge')?.addEventListener('click', confirmLocalAccountMerge);
-  document.getElementById('cancel-account-data-merge')?.addEventListener('click', cancelLocalAccountMerge);
   document.getElementById('auth-password')?.addEventListener('input', updateAuthPasswordConfirmation);
   document.getElementById('auth-password-confirm')?.addEventListener('input', updateAuthPasswordConfirmation);
   document.getElementById('recovery-request-form')?.addEventListener('submit', submitPasswordRecoveryRequest);
@@ -4764,12 +4786,8 @@ function initialize() {
     const handled = await handleAuthCallback();
     if (handled) return;
     const savedSession = readCloudSession();
-    let localOwner = '';
-    try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
-    if (savedSession?.access_token && savedSession.user?.id && (!localOwner || localOwner === savedSession.user.id)) {
-      if (!localOwner) {
-        try { localStorage.setItem(CLOUD_OWNER_KEY, savedSession.user.id); } catch { /* sessão pode continuar local até o próximo login */ }
-      }
+    if (savedSession?.access_token && savedSession.user?.id) {
+      await switchLocalDataOwner(savedSession.user.id);
       cloudWorkspaceId = (() => { try { return localStorage.getItem(CLOUD_WORKSPACE_KEY) || ''; } catch { return ''; } })();
       saveCloudSession(savedSession);
       authMode = 'account';
@@ -4788,11 +4806,7 @@ function initialize() {
       });
       return;
     }
-    if (savedSession?.access_token && localOwner && savedSession.user?.id && localOwner !== savedSession.user.id) {
-      saveCloudSession(null);
-      cloudWorkspaceId = '';
-      authNotice = 'A sessão salva não corresponde aos dados deste tablet. Entre na conta desejada para continuar.';
-    } else if (savedSession?.access_token) {
+    if (savedSession?.access_token) {
       saveCloudSession(null);
       cloudWorkspaceId = '';
       authNotice = 'A sessão salva está incompleta. Entre novamente para continuar.';
@@ -4809,7 +4823,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261103-payment-sandbox-guard').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261103-account-isolation').catch(() => undefined);
 }
 
 initialize();
