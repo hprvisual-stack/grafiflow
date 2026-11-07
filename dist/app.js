@@ -3,15 +3,16 @@ import { conflictCopyId, hasMeaningfulDraft, shouldQueueLocalRecord } from './cl
 import { legacyOwnerFromStorage, localDatabaseNameForOwner, UNOWNED_LEGACY_OWNER_MARKER } from './local-account-storage.js';
 import { formatMoneyInputValue, nextMoneyInputValue } from './money-input.js';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.5.0';
 const DB_NAME = 'nesto-local-v1';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const CLOUD_SESSION_KEY = 'grafiflow.auth.v1';
 const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
 const LEGACY_LOCAL_OWNER_KEY = 'metriflow.local.legacy-owner.v2';
 const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v1';
 const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
+const TEAM_SESSION_KEY = 'metriflow.team.session.v1';
 const MAX_ROLL_LENGTH_MM = 50000;
 const MAX_LAYOUT_PIECES_PER_MATERIAL = 1000;
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
@@ -130,6 +131,7 @@ const state = {
     supplies: [],
   },
   salePrice: 0,
+  applicationSalePrice: 0,
   otherCosts: 0,
   targetMargin: 35,
 };
@@ -139,6 +141,12 @@ let savedCatalogItems = [];
 let savedMaterialVolumeTiers = [];
 let savedQuotes = [];
 let savedCustomers = [];
+let savedTeamTasks = [];
+let savedPurchases = [];
+let teamAccess = { team_enabled: false, dev_account: false, setup_required: false };
+let teamOperator = null;
+let teamOperatorSessionToken = '';
+let teamMembers = [];
 let selectedCustomerId = '';
 let computed = emptyComputed();
 let dbPromise;
@@ -324,6 +332,8 @@ function openDatabase() {
       if (!db.objectStoreNames.contains('customers')) db.createObjectStore('customers', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
       if (!db.objectStoreNames.contains('syncQueue')) db.createObjectStore('syncQueue', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('tasks')) db.createObjectStore('tasks', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('purchases')) db.createObjectStore('purchases', { keyPath: 'id' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -338,6 +348,11 @@ function idbRequest(request) {
   });
 }
 
+function localStoreKey(storeName, key) {
+  if (storeName === 'settings' && key === 'draft' && teamAccess.team_enabled && teamOperator?.id) return `draft:team:${teamOperator.id}`;
+  return key;
+}
+
 async function storeGetAll(storeName) {
   const db = await openDatabase();
   if (!db) return [];
@@ -349,14 +364,14 @@ async function storeGet(storeName, key) {
   const db = await openDatabase();
   if (!db) return undefined;
   const transaction = db.transaction(storeName, 'readonly');
-  return idbRequest(transaction.objectStore(storeName).get(key));
+  return idbRequest(transaction.objectStore(storeName).get(localStoreKey(storeName, key)));
 }
 
 async function storePut(storeName, value, { fromCloud = false } = {}) {
   const db = await openDatabase();
   if (!db) return;
   let storedValue = value;
-  if (!fromCloud && ['materials', 'quotes', 'customers'].includes(storeName)) {
+  if (!fromCloud && ['materials', 'quotes', 'customers', 'tasks', 'purchases'].includes(storeName)) {
     const existing = await storeGet(storeName, value.id);
     storedValue = {
       ...value,
@@ -365,7 +380,7 @@ async function storePut(storeName, value, { fromCloud = false } = {}) {
       _cloudDirty: true,
     };
   } else if (!fromCloud && storeName === 'settings' && value?.key === 'draft') {
-    storedValue = { ...value };
+    storedValue = { ...value, key: localStoreKey(storeName, value.key) };
     delete storedValue._cloudDirty;
   }
   const transaction = db.transaction(storeName, 'readwrite');
@@ -380,7 +395,7 @@ async function storeDelete(storeName, key, { fromCloud = false } = {}) {
   if (!db) return;
   const existing = fromCloud ? null : await storeGet(storeName, key);
   const transaction = db.transaction(storeName, 'readwrite');
-  await idbRequest(transaction.objectStore(storeName).delete(key));
+  await idbRequest(transaction.objectStore(storeName).delete(localStoreKey(storeName, key)));
   if (!fromCloud) await queueCloudMutation(storeName, null, {
     recordId: key,
     recordType: recordIdentity(storeName, existing || { id: key })?.type,
@@ -440,13 +455,15 @@ function recordIdentity(storeName, value) {
   if (storeName === 'materials' && value?.id) return { type: catalogRecordType(value.catalogCategory) || 'material', id: String(value.id) };
   if (storeName === 'quotes' && value?.id) return { type: 'quote', id: String(value.id) };
   if (storeName === 'customers' && value?.id) return { type: 'customer', id: String(value.id) };
+  if (storeName === 'tasks' && value?.id) return { type: 'team_task', id: String(value.id) };
+  if (storeName === 'purchases' && value?.id) return { type: 'purchase', id: String(value.id) };
   return null;
 }
 
 async function queueCloudMutation(storeName, value, { recordId = '', recordType = '', deleted = false, baseUpdatedAt = null } = {}) {
-  if (!['settings', 'materials', 'quotes', 'customers'].includes(storeName)) return;
+  if (!['settings', 'materials', 'quotes', 'customers', 'tasks', 'purchases'].includes(storeName)) return;
   if (storeName === 'settings' && value?.key === 'draft') return;
-  const inferredType = storeName === 'materials' ? 'material' : storeName === 'quotes' ? 'quote' : 'customer';
+  const inferredType = storeName === 'materials' ? 'material' : storeName === 'quotes' ? 'quote' : storeName === 'customers' ? 'customer' : storeName === 'tasks' ? 'team_task' : 'purchase';
   const identity = value
     ? recordIdentity(storeName, value)
     : storeName === 'settings' ? null : { type: recordType || inferredType, id: String(recordId) };
@@ -461,10 +478,13 @@ async function queueCloudMutation(storeName, value, { recordId = '', recordType 
   const queuedBase = existing && Object.prototype.hasOwnProperty.call(existing, 'baseUpdatedAt')
     ? existing.baseUpdatedAt
     : baseUpdatedAt || value?._cloudVersionAt || null;
+  const actorOperatorId = teamAccess.team_enabled ? (teamOperator?.id || existing?.actorOperatorId || value?._ownerOperatorId || null) : null;
   const payload = deleted ? null : clone(value);
   if (payload && typeof payload === 'object') {
     delete payload._cloudVersionAt;
     delete payload._cloudDirty;
+    delete payload._ownerOperatorId;
+    delete payload._isShared;
   }
   const transaction = db.transaction('syncQueue', 'readwrite');
   await idbRequest(transaction.objectStore('syncQueue').put({
@@ -475,6 +495,7 @@ async function queueCloudMutation(storeName, value, { recordId = '', recordType 
     deleted,
     updatedAt: timestamp,
     baseUpdatedAt: queuedBase,
+    actorOperatorId,
   }));
   scheduleCloudSync();
   cloudSyncChannel?.postMessage({ type: 'local-change', recordType: identity.type, recordId: identity.id });
@@ -863,6 +884,11 @@ function applyBillingEntitlement(entitlement, periods = billingHistory, { persis
     status.textContent = isVerifying ? 'Consultando o status da sua assinatura…' : (messages[entitlement.state] || '');
     status.hidden = !status.textContent;
   }
+  if (entitlement.dev_access) {
+    if (title) title.textContent = 'Acesso DEV liberado';
+    if (copy) copy.textContent = 'Esta conta tem acesso de desenvolvimento para validar recursos antes da liberação comercial.';
+    if (status) { status.hidden = false; status.textContent = 'Conta DEV: trial e cobrança não serão iniciados nesta conta.'; }
+  }
   if (trialButton) trialButton.hidden = !startTrialAvailable;
   if (trialNote) trialNote.hidden = !startTrialAvailable;
   renderWorkspaceBilling(entitlement, billingHistory);
@@ -1242,16 +1268,267 @@ async function getWorkspaceMembership() {
   return cloudWorkspaceId;
 }
 
+function readTeamSession() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TEAM_SESSION_KEY) || 'null');
+    if (!saved || saved.userId !== cloudSession?.user?.id || saved.workspaceId !== cloudWorkspaceId) return null;
+    if (Number(saved.expiresAt || 0) <= Date.now()) return null;
+    return saved;
+  } catch { return null; }
+}
+
+function saveTeamSession(session) {
+  teamOperatorSessionToken = session?.token || '';
+  teamOperator = session ? {
+    id: session.operatorId,
+    name: session.operatorName,
+    role: session.operatorRole,
+    isAdmin: session.operatorRole === 'admin',
+  } : null;
+  try {
+    if (session) localStorage.setItem(TEAM_SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(TEAM_SESSION_KEY);
+  } catch { /* PIN session storage is optional. */ }
+  updateTeamNavigation();
+}
+
+async function refreshTeamContext() {
+  if (!cloudSession?.access_token || !cloudWorkspaceId) return;
+  const cached = readTeamSession();
+  if (!navigator.onLine || !cloudConfigured()) {
+    const savedMode = (() => { try { return JSON.parse(localStorage.getItem(`${TEAM_SESSION_KEY}:${cloudWorkspaceId}`) || 'null'); } catch { return null; } })();
+    teamAccess = savedMode?.teamEnabled ? { team_enabled: true, dev_account: savedMode.devAccount === true, setup_required: false } : { team_enabled: false, dev_account: false, setup_required: false };
+    saveTeamSession(cached);
+    updateTeamNavigation();
+    if (teamAccess.team_enabled && !teamOperator) openTeamAccessModal(false, 'Sem internet. Conecte-se para iniciar um PIN ou validar sua sessão.');
+    return;
+  }
+  const context = await cloudFetch('/rest/v1/rpc/team_get_context', {
+    method: 'POST', token: cloudSession.access_token,
+    body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: cached?.token || null },
+  });
+  teamAccess = context || { team_enabled: false, dev_account: false, setup_required: false };
+  try { localStorage.setItem(`${TEAM_SESSION_KEY}:${cloudWorkspaceId}`, JSON.stringify({ teamEnabled: teamAccess.team_enabled, devAccount: teamAccess.dev_account })); } catch { /* optional */ }
+  if (teamAccess.team_enabled && teamAccess.authenticated && cached) {
+    saveTeamSession({ ...cached, operatorId: context.operator_id, operatorName: context.operator_name, operatorRole: context.operator_role });
+  } else {
+    saveTeamSession(null);
+  }
+  updateTeamNavigation();
+  if (teamAccess.team_enabled && !teamOperator) openTeamAccessModal(teamAccess.setup_required);
+  else closeTeamAccessModal();
+  renderTeamWorkspace();
+  renderAdminWorkspace();
+  renderMaterialsWorkspace();
+  renderFinanceWorkspace();
+}
+
+function openTeamAccessModal(setup = false, message = '') {
+  const modal = document.getElementById('team-access-modal');
+  const setupForm = document.getElementById('team-admin-setup-form');
+  const pinForm = document.getElementById('team-pin-form');
+  const title = document.getElementById('team-access-title');
+  const copy = document.getElementById('team-access-copy');
+  if (!modal) return;
+  if (setupForm) setupForm.hidden = !setup;
+  if (pinForm) pinForm.hidden = setup;
+  if (title) title.textContent = setup ? 'Configure o PIN ADM' : 'Acesse sua equipe';
+  if (copy) copy.textContent = message || (setup ? 'Crie o PIN seguro do administrador principal para este espaço.' : 'Digite seu PIN individual de 6 a 12 números.');
+  modal.hidden = false;
+  document.getElementById(setup ? 'team-admin-name' : 'team-pin-input')?.focus();
+  updateTeamNavigation();
+}
+
+function closeTeamAccessModal() {
+  const modal = document.getElementById('team-access-modal');
+  if (modal) modal.hidden = true;
+}
+
+function updateTeamNavigation() {
+  const enabled = teamAccess.team_enabled === true;
+  const isAdmin = enabled && teamOperator?.role === 'admin';
+  const devBadge = document.getElementById('dev-account-badge');
+  if (devBadge) devBadge.hidden = teamAccess.dev_account !== true;
+  document.querySelectorAll('.team-nav-item').forEach((item) => { item.hidden = !enabled; });
+  document.querySelectorAll('.admin-nav-item').forEach((item) => { item.hidden = !isAdmin; });
+  const gate = document.getElementById('team-access-modal');
+  const locked = enabled && !teamOperator;
+  if (gate && locked && cloudSession?.access_token && !gate.hidden) document.querySelector('.app-shell')?.setAttribute('aria-busy', 'true');
+  if (!locked) document.querySelector('.app-shell')?.removeAttribute('aria-busy');
+  if (!isAdmin && document.getElementById('admin-view')?.classList.contains('active')) switchView('team-view');
+  if (!enabled && (document.getElementById('team-view')?.classList.contains('active') || document.getElementById('admin-view')?.classList.contains('active'))) switchView('calculator-view');
+  renderTeamWorkspace();
+}
+
+async function authenticateTeamPin(event) {
+  event?.preventDefault();
+  const feedback = document.getElementById('team-pin-feedback');
+  const pin = document.getElementById('team-pin-input')?.value || '';
+  if (!navigator.onLine) { openTeamAccessModal(false, 'Conecte-se à internet para validar o PIN.'); return; }
+  try {
+    const result = await cloudFetch('/rest/v1/rpc/team_authenticate_pin', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_pin: pin },
+    });
+    if (!result?.authenticated) {
+      if (feedback) feedback.textContent = result?.message || 'Não foi possível validar o PIN.';
+      const input = document.getElementById('team-pin-input');
+      if (input) { input.value = ''; input.focus(); }
+      return;
+    }
+    saveTeamSession({ token: result.session_token, userId: cloudSession.user.id, workspaceId: cloudWorkspaceId, operatorId: result.operator_id, operatorName: result.operator_name, operatorRole: result.operator_role, expiresAt: new Date(result.expires_at).getTime() });
+    closeTeamAccessModal();
+    if (document.getElementById('team-pin-input')) document.getElementById('team-pin-input').value = '';
+    await loadTeamOperatorDraft();
+    await syncCloudNow();
+    await loadTeamMembers();
+    renderAll();
+    renderTeamWorkspace();
+    renderAdminWorkspace();
+    showToast(`Acesso liberado para ${teamOperator.name}.`);
+  } catch (error) {
+    if (feedback) feedback.textContent = error.message || 'Não foi possível validar o PIN.';
+  }
+}
+
+async function loadTeamOperatorDraft() {
+  if (!teamAccess.team_enabled || !teamOperator) return;
+  let draft = await storeGet('settings', 'draft');
+  if (!draft && teamOperator.role === 'admin') {
+    const db = await openDatabase();
+    if (db) {
+      const legacy = await idbRequest(db.transaction('settings', 'readonly').objectStore('settings').get('draft'));
+      const marker = `${TEAM_SESSION_KEY}:draft-migrated:${cloudWorkspaceId}`;
+      let migrated = false;
+      try { migrated = localStorage.getItem(marker) === 'true'; } catch { /* optional */ }
+      if (legacy && !migrated) {
+        draft = { ...legacy, key: 'draft' };
+        await storePut('settings', draft);
+        try { localStorage.setItem(marker, 'true'); } catch { /* optional */ }
+      }
+    }
+  }
+  if (draft?.value) {
+    hydrateState(draft.value, { inferDefaultText: !draft.value.quoteId });
+    calculationHasUnsavedChanges = draft.hasUnfinalizedChanges === true;
+    draftClearIntent = draft.clearIntent === true;
+    calculationBaseline = calculationHasUnsavedChanges ? savedQuoteSnapshotFor(state) : clone(state);
+  } else {
+    state.quoteId = null;
+    state.quoteName = '';
+    state.clientQuote = defaultClientQuote();
+    state.materials = [defaultMaterial()];
+    state.pieces = [defaultPiece(state.materials[0].id)];
+    state.globalBleed = 0;
+    state.globalGap = 2;
+    state.optimize = true;
+    state.installation = { type: 'lona', basis: 'm2', quantity: 0, unitPrice: 0, travel: 0, autoQuantity: true, supplies: [] };
+    state.salePrice = 0;
+    state.applicationSalePrice = 0;
+    state.otherCosts = 0;
+    state.targetMargin = 35;
+    applyAccountProfileToQuote();
+    calculationHasUnsavedChanges = false;
+    draftClearIntent = false;
+    calculationBaseline = clone(state);
+    await persistDraftNow();
+  }
+  renderAll({ persistDraft: false });
+}
+
+async function initializeTeamAdminPin(event) {
+  event?.preventDefault();
+  const name = document.getElementById('team-admin-name')?.value.trim() || cloudSession?.user?.user_metadata?.full_name || 'Administrador';
+  const pin = document.getElementById('team-admin-pin')?.value || '';
+  const confirmation = document.getElementById('team-admin-pin-confirm')?.value || '';
+  const feedback = document.getElementById('team-admin-setup-feedback');
+  if (!/^\d{6,12}$/.test(pin) || pin !== confirmation) {
+    if (feedback) feedback.textContent = pin !== confirmation ? 'Os PINs não coincidem.' : 'Use de 6 a 12 números.';
+    return;
+  }
+  try {
+    await cloudFetch('/rest/v1/rpc/team_initialize_admin_pin', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_display_name: name, p_pin: pin },
+    });
+    document.getElementById('team-admin-setup-form')?.reset();
+    await refreshTeamContext();
+    setValue('team-pin-input', pin);
+    await authenticateTeamPin(null);
+  } catch (error) {
+    if (feedback) feedback.textContent = error.message || 'Não foi possível criar o PIN ADM.';
+  }
+}
+
+async function teamSignOut({ showGate = true } = {}) {
+  if (teamOperator) await persistDraftNow().catch(() => {});
+  try {
+    if (teamOperatorSessionToken && navigator.onLine) await cloudFetch('/rest/v1/rpc/team_logout', {
+      method: 'POST', token: cloudSession?.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken },
+    });
+  } catch (error) { console.warn('A sessão do PIN será encerrada neste aparelho.', error); }
+  saveTeamSession(null);
+  if (showGate && teamAccess.team_enabled) openTeamAccessModal(false);
+  else closeTeamAccessModal();
+}
+
+async function loadTeamMembers() {
+  if (!teamAccess.team_enabled || !teamOperatorSessionToken || !navigator.onLine) return;
+  const rows = await cloudFetch('/rest/v1/rpc/team_list_operator_directory', {
+    method: 'POST', token: cloudSession?.access_token,
+    body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken },
+  });
+  teamMembers = Array.isArray(rows) ? rows : [];
+  if (teamOperator?.role === 'admin') {
+    const adminRows = await cloudFetch('/rest/v1/rpc/team_admin_list_members', {
+      method: 'POST', token: cloudSession?.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken },
+    });
+    if (Array.isArray(adminRows)) teamMembers = adminRows;
+  }
+  renderAdminWorkspace();
+}
+
+function teamOwnerLabel(operatorId) {
+  if (!operatorId) return 'Administrador da conta';
+  return teamMembers.find((member) => member.id === operatorId)?.name || (operatorId === teamOperator?.id ? teamOperator.name : 'Membro da equipe');
+}
+
+function canEditTeamRecord(record) {
+  if (!teamAccess.team_enabled) return true;
+  if (!teamOperator) return false;
+  if (record && savedQuotes.some((quote) => quote.id === record.id)) return record._ownerOperatorId === teamOperator.id;
+  return teamOperator.role === 'admin' || record?._ownerOperatorId === teamOperator.id;
+}
+
+function canSeeTeamCatalogItem(item) {
+  if (!teamAccess.team_enabled) return true;
+  if (!teamOperator) return false;
+  return teamOperator.role === 'admin' || item?._isShared === true || item?._ownerOperatorId === teamOperator.id;
+}
+
+function currentOperatorQuotes() {
+  return teamAccess.team_enabled && teamOperator?.role !== 'admin'
+    ? savedQuotes.filter((quote) => quote._ownerOperatorId === teamOperator?.id)
+    : savedQuotes;
+}
+
+function currentOperatorRecords(items) {
+  if (!teamAccess.team_enabled || teamOperator?.role === 'admin') return items;
+  return items.filter((item) => item._ownerOperatorId === teamOperator?.id);
+}
+
 async function queueLocalDataForFirstSync() {
   if (!cloudSession?.user?.id || cloudSession.user.id !== activeLocalDataOwner) {
     throw new Error('Os dados locais não correspondem à conta conectada. Entre novamente para sincronizar com segurança.');
   }
-  const [materials, quotes, customers] = await Promise.all([
-    storeGetAll('materials'), storeGetAll('quotes'), storeGetAll('customers'),
+  const [materials, quotes, customers, tasks, purchases] = await Promise.all([
+    storeGetAll('materials'), storeGetAll('quotes'), storeGetAll('customers'), storeGetAll('tasks'), storeGetAll('purchases'),
   ]);
   const queuedDraft = await storeGet('syncQueue', 'draft:draft');
   if (queuedDraft) await deleteQueuedMutation(queuedDraft.id);
-  for (const [storeName, records] of [['materials', materials], ['quotes', quotes], ['customers', customers]]) {
+  for (const [storeName, records] of [['materials', materials], ['quotes', quotes], ['customers', customers], ['tasks', tasks], ['purchases', purchases]]) {
     for (const record of records) {
       const identity = recordIdentity(storeName, record);
       if (!identity || !shouldQueueLocalRecord(record)) continue;
@@ -1268,6 +1545,8 @@ async function localRecordTimestamp(recordType, recordId) {
   if (recordType === 'material' || catalogCategoryFromRecordType(recordType)) value = await storeGet('materials', recordId);
   if (recordType === 'quote') value = await storeGet('quotes', recordId);
   if (recordType === 'customer') value = await storeGet('customers', recordId);
+  if (recordType === 'team_task') value = await storeGet('tasks', recordId);
+  if (recordType === 'purchase') value = await storeGet('purchases', recordId);
   if (recordType === 'material' && (value?.catalogCategory || String(recordId).startsWith('catalog:'))) {
     const category = value?.catalogCategory;
     const categoryTypes = category ? [catalogRecordType(category)] : Object.values(CATALOG_RECORD_TYPES);
@@ -1290,6 +1569,8 @@ function cloudPayloadMatchesLocal(recordType, local, payload) {
     delete copy._syncUpdatedAt;
     delete copy._cloudVersionAt;
     delete copy._cloudDirty;
+    delete copy._ownerOperatorId;
+    delete copy._isShared;
     return JSON.stringify(copy);
   };
   return stripSyncMetadata(local) === stripSyncMetadata(payload);
@@ -1312,6 +1593,8 @@ function cloudSyncPayloadsEqual(recordType, left, right) {
     delete copy._syncUpdatedAt;
     delete copy._cloudVersionAt;
     delete copy._cloudDirty;
+    delete copy._ownerOperatorId;
+    delete copy._isShared;
     delete copy.updatedAt;
     return stableCloudValue(copy);
   };
@@ -1382,7 +1665,9 @@ async function applyCloudRecords(records) {
     if (await localRecordTimestamp(record.record_type, record.record_id) > cloudTime) continue;
     const isCatalogType = Boolean(catalogCategoryFromRecordType(record.record_type));
     const storeName = (record.record_type === 'material' || isCatalogType) ? 'materials'
-      : record.record_type === 'customer' ? 'customers' : 'quotes';
+      : record.record_type === 'customer' ? 'customers'
+        : record.record_type === 'team_task' ? 'tasks'
+          : record.record_type === 'purchase' ? 'purchases' : 'quotes';
     const localId = record.record_id;
     const local = await storeGet(storeName, localId);
     const catalogCategory = catalogCategoryForRecord(record) || local?.catalogCategory || '';
@@ -1405,6 +1690,8 @@ async function applyCloudRecords(records) {
         if (selectedCustomerId === record.record_id) selectedCustomerId = '';
         customersChanged = true;
       }
+      if (record.record_type === 'team_task') savedTeamTasks = savedTeamTasks.filter((item) => item.id !== record.record_id);
+      if (record.record_type === 'purchase') savedPurchases = savedPurchases.filter((item) => item.id !== record.record_id);
       if (isCatalogItem) {
         savedCatalogItems = savedCatalogItems.filter((item) => item.id !== record.record_id);
         catalogChanged = true;
@@ -1412,15 +1699,31 @@ async function applyCloudRecords(records) {
       continue;
     }
     const payload = record.payload;
+    const cloudMetadata = { _ownerOperatorId: record.owner_operator_id || null, _isShared: record.is_shared === true };
     if (cloudPayloadMatchesLocal(record.record_type, local, payload)) {
-      if (local && (local._cloudVersionAt !== record.updated_at || local._cloudDirty)) {
-        await storePut(storeName, { ...local, _cloudVersionAt: record.updated_at, _cloudDirty: false }, { fromCloud: true });
+      if (local && (local._cloudVersionAt !== record.updated_at || local._cloudDirty || local._ownerOperatorId !== cloudMetadata._ownerOperatorId || local._isShared !== cloudMetadata._isShared)) {
+        const updated = { ...local, ...cloudMetadata, _cloudVersionAt: record.updated_at, _cloudDirty: false };
+        await storePut(storeName, updated, { fromCloud: true });
+        if (record.record_type === 'material') {
+          savedMaterials = savedMaterials.map((item) => item.id === localId ? normalizeMaterial(updated) : item);
+          materialsChanged = true;
+        } else if (isCatalogItem) {
+          savedCatalogItems = savedCatalogItems.map((item) => item.id === localId ? updated : item);
+          catalogChanged = true;
+        } else if (record.record_type === 'quote') {
+          savedQuotes = savedQuotes.map((item) => item.id === localId ? updated : item);
+          quotesChanged = true;
+        } else if (record.record_type === 'team_task') {
+          savedTeamTasks = savedTeamTasks.map((item) => item.id === localId ? updated : item);
+        } else if (record.record_type === 'purchase') {
+          savedPurchases = savedPurchases.map((item) => item.id === localId ? updated : item);
+        }
       }
       continue;
     }
     if (isCatalogItem && (payload?.catalogCategory || catalogCategory)) {
       const category = payload?.catalogCategory || catalogCategory;
-      const item = { ...payload, catalogCategory: category, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
+      const item = { ...payload, ...cloudMetadata, catalogCategory: category, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('materials', item, { fromCloud: true });
       savedCatalogItems = [item, ...savedCatalogItems.filter((entry) => entry.id !== record.record_id)].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       catalogChanged = true;
@@ -1428,12 +1731,12 @@ async function applyCloudRecords(records) {
         await queueCloudMutation('materials', item);
       }
     } else if (record.record_type === 'material' && payload?.id) {
-      const material = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
+      const material = { ...payload, ...cloudMetadata, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('materials', material, { fromCloud: true });
       savedMaterials = [normalizeMaterial(material), ...savedMaterials.filter((item) => item.id !== record.record_id)];
       materialsChanged = true;
     } else if (record.record_type === 'quote' && payload?.id) {
-      const quote = { ...payload, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
+      const quote = { ...payload, ...cloudMetadata, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('quotes', quote, { fromCloud: true });
       savedQuotes = [quote, ...savedQuotes.filter((item) => item.id !== record.record_id)].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
       quotesChanged = true;
@@ -1442,6 +1745,14 @@ async function applyCloudRecords(records) {
       await storePut('customers', customer, { fromCloud: true });
       savedCustomers = [customer, ...savedCustomers.filter((item) => item.id !== record.record_id)].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       customersChanged = true;
+    } else if (record.record_type === 'team_task' && payload?.id) {
+      const task = { ...payload, ...cloudMetadata, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
+      await storePut('tasks', task, { fromCloud: true });
+      savedTeamTasks = [task, ...savedTeamTasks.filter((entry) => entry.id !== record.record_id)].sort((a, b) => String(a.dueAt || '').localeCompare(String(b.dueAt || '')));
+    } else if (record.record_type === 'purchase' && payload?.id) {
+      const purchase = { ...payload, ...cloudMetadata, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
+      await storePut('purchases', purchase, { fromCloud: true });
+      savedPurchases = [purchase, ...savedPurchases.filter((entry) => entry.id !== record.record_id)].sort((a, b) => new Date(b.purchasedAt || b.updatedAt) - new Date(a.purchasedAt || a.updatedAt));
     }
   }
   if (materialsChanged) {
@@ -1457,19 +1768,25 @@ async function applyCloudRecords(records) {
     renderCustomers();
     renderCustomerSelect();
   }
+  if (materialsChanged || catalogChanged) renderMaterialsWorkspace();
+  if (quotesChanged || customersChanged || savedPurchases.length || savedTeamTasks.length) {
+    renderTeamWorkspace();
+    renderFinanceWorkspace();
+    void renderAdminWorkspace();
+  }
   return false;
 }
 
 async function cloudSyncCursor() {
   if (!cloudWorkspaceId) return 0;
-  const record = await storeGet('settings', `${SYNC_CURSOR_KEY}:${cloudWorkspaceId}`);
+  const record = await storeGet('settings', `${SYNC_CURSOR_KEY}:${cloudWorkspaceId}:${teamAccess.team_enabled ? (teamOperator?.id || 'unassigned') : 'solo'}`);
   const value = Number(record?.value || 0);
   return Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
 async function saveCloudSyncCursor(value) {
   if (!cloudWorkspaceId || !Number.isSafeInteger(value) || value < 0) return;
-  await storePut('settings', { key: `${SYNC_CURSOR_KEY}:${cloudWorkspaceId}`, value }, { fromCloud: true });
+  await storePut('settings', { key: `${SYNC_CURSOR_KEY}:${cloudWorkspaceId}:${teamAccess.team_enabled ? (teamOperator?.id || 'unassigned') : 'solo'}`, value }, { fromCloud: true });
 }
 
 function isMissingIncrementalSyncRpc(error) {
@@ -1487,7 +1804,7 @@ async function detectIncrementalSyncSupport(session) {
     await cloudFetch('/rest/v1/rpc/list_grafiflow_records', {
       method: 'POST',
       token: session.access_token,
-      body: { target_workspace_id: cloudWorkspaceId, after_change_seq: await cloudSyncCursor(), page_size: 1 },
+      body: { target_workspace_id: cloudWorkspaceId, after_change_seq: await cloudSyncCursor(), page_size: 1, operator_session_token: teamOperatorSessionToken || null },
     });
     cloudIncrementalSyncAvailable = true;
   } catch (error) {
@@ -1528,14 +1845,19 @@ async function normalizeLegacyCatalogQueue() {
 
 async function downloadFullCloudSnapshot(session) {
   const records = [];
-  let offset = 0;
+  let cursor = 0;
   while (true) {
-    const page = await cloudFetch(`/rest/v1/grafiflow_records?select=workspace_id,record_type,record_id,payload,is_deleted,updated_at&workspace_id=eq.${encodeURIComponent(cloudWorkspaceId)}&order=record_type.asc,record_id.asc&limit=500&offset=${offset}`, { token: session.access_token });
+    const page = await cloudFetch('/rest/v1/rpc/list_grafiflow_records', {
+      method: 'POST', token: session.access_token,
+      body: { target_workspace_id: cloudWorkspaceId, after_change_seq: cursor, page_size: 500, operator_session_token: teamOperatorSessionToken || null },
+    });
     if (!Array.isArray(page)) throw new Error('O Supabase não retornou a lista de registros.');
     if (!page.length) break;
     records.push(...page);
+    const nextCursor = page.reduce((maximum, record) => Math.max(maximum, Number(record.change_seq) || 0), cursor);
+    if (nextCursor <= cursor) throw new Error('A sincronização recebeu um cursor inválido.');
+    cursor = nextCursor;
     if (page.length < 500) break;
-    offset += page.length;
   }
   return !(await applyCloudRecords(records));
 }
@@ -1546,7 +1868,7 @@ async function downloadIncrementalCloudChanges(session) {
     const page = await cloudFetch('/rest/v1/rpc/list_grafiflow_records', {
       method: 'POST',
       token: session.access_token,
-      body: { target_workspace_id: cloudWorkspaceId, after_change_seq: cursor, page_size: 500 },
+      body: { target_workspace_id: cloudWorkspaceId, after_change_seq: cursor, page_size: 500, operator_session_token: teamOperatorSessionToken || null },
     });
     if (!Array.isArray(page)) throw new Error('O Supabase não retornou uma página válida de alterações.');
     if (!page.length) break;
@@ -1575,6 +1897,10 @@ async function syncCloudNow() {
     restoreCloudAccount();
     return;
   }
+  if (teamAccess.team_enabled && !teamOperatorSessionToken) {
+    updateAccountStatus('Entre com seu PIN de operador para sincronizar os dados da equipe.');
+    return;
+  }
   if (cloudSyncRunning) {
     cloudSyncRequested = true;
     return;
@@ -1601,6 +1927,8 @@ async function syncCloudNow() {
     for (const item of queuedItems) {
       if (item.recordType === 'draft') {
         await deleteQueuedMutation(item.id);
+      } else if (teamAccess.team_enabled && item.actorOperatorId && item.actorOperatorId !== teamOperator?.id) {
+        continue;
       } else {
         queue.push(item);
       }
@@ -1624,7 +1952,7 @@ async function syncCloudNow() {
       const batch = queue.slice(index, index + 100);
       const syncedRows = await cloudFetch('/rest/v1/rpc/sync_grafiflow_records', {
         method: 'POST', token: session.access_token,
-        body: { target_workspace_id: cloudWorkspaceId, changes: changes.slice(index, index + 100) },
+        body: { target_workspace_id: cloudWorkspaceId, changes: changes.slice(index, index + 100), operator_session_token: teamOperatorSessionToken || null },
       });
       if (!Array.isArray(syncedRows)) throw new Error('O Supabase não confirmou as alterações enviadas. A fila local foi preservada.');
       confirmedRows.push(...syncedRows);
@@ -1681,10 +2009,13 @@ async function syncCloudNow() {
   } finally {
     cloudSyncRunning = false;
     const pending = await storeGetAll('syncQueue').catch(() => []);
+    const syncablePending = teamAccess.team_enabled
+      ? pending.filter((item) => !item.actorOperatorId || item.actorOperatorId === teamOperator?.id)
+      : pending;
     const requested = cloudSyncRequested;
     cloudSyncRequested = false;
     if (syncSucceeded && !calculationHasUnsavedChanges) updateAccountStatus('Sincronizado');
-    if (syncSucceeded && (pending.length || requested)) scheduleCloudSync();
+    if (syncSucceeded && (syncablePending.length || requested)) scheduleCloudSync();
     finishSync?.();
   }
 }
@@ -1695,6 +2026,7 @@ async function activateCloudSession(session, { backgroundSync = false } = {}) {
   if (ownerId) await switchLocalDataOwner(ownerId);
   saveCloudSession(nextSession);
   if (!navigator.onLine) {
+    if (cloudWorkspaceId) await refreshTeamContext().catch(() => {});
     updateAccountStatus('Conta disponível offline');
     return true;
   }
@@ -1704,6 +2036,7 @@ async function activateCloudSession(session, { backgroundSync = false } = {}) {
       try {
         await loadAccountProfile();
         await getWorkspaceMembership();
+        await refreshTeamContext();
         await queueLocalDataForFirstSync();
       } catch (error) {
         console.warn('Não foi possível preparar a sincronização da conta.', error);
@@ -1720,6 +2053,7 @@ async function activateCloudSession(session, { backgroundSync = false } = {}) {
   try {
     await loadAccountProfile();
     await getWorkspaceMembership();
+    await refreshTeamContext();
     await queueLocalDataForFirstSync();
     await syncCloudNow();
   } catch (error) {
@@ -1739,6 +2073,7 @@ async function restoreCloudAccount({ backgroundSetup = false } = {}) {
   try { localOwner = localStorage.getItem(CLOUD_OWNER_KEY) || ''; } catch { /* armazenamento local opcional */ }
   saveCloudSession(saved);
   if (!cloudConfigured() || !navigator.onLine) {
+    if (cloudWorkspaceId) await refreshTeamContext().catch(() => {});
     updateAccountStatus(navigator.onLine ? 'Configure o Supabase para sincronizar' : 'Conta disponível offline');
     return true;
   }
@@ -1756,6 +2091,7 @@ async function restoreCloudAccount({ backgroundSetup = false } = {}) {
     saveCloudSession({ ...session, user });
     await loadAccountProfile(user);
     if (!cloudWorkspaceId) await getWorkspaceMembership();
+    await refreshTeamContext();
     await queueLocalDataForFirstSync();
     if (backgroundSetup) cloudSessionSetupRunning = false;
     await syncCloudNow();
@@ -2238,6 +2574,7 @@ async function handleAuthCallback() {
 }
 
 async function signOutCloudAccount() {
+  await teamSignOut({ showGate: false });
   try {
     if (cloudSession?.access_token && navigator.onLine && cloudConfigured()) {
       await cloudFetch('/auth/v1/logout', { method: 'POST', body: {}, token: cloudSession.access_token });
@@ -2260,11 +2597,13 @@ async function signOutCloudAccount() {
 
 async function loadPersistence() {
   try {
-    const [draft, materials, quotes, customers] = await Promise.all([
+    const [draft, materials, quotes, customers, tasks, purchases] = await Promise.all([
       storeGet('settings', 'draft'),
       storeGetAll('materials'),
       storeGetAll('quotes'),
       storeGetAll('customers'),
+      storeGetAll('tasks'),
+      storeGetAll('purchases'),
     ]);
     draftClearIntent = draft?.clearIntent === true;
     if (draft?.value) hydrateState(draft.value, { inferDefaultText: !draft.value.quoteId });
@@ -2273,6 +2612,8 @@ async function loadPersistence() {
     renderCatalogItems();
     if (quotes.length) savedQuotes = quotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     savedCustomers = customers.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    savedTeamTasks = tasks.sort((a, b) => String(a.dueAt || '').localeCompare(String(b.dueAt || '')));
+    savedPurchases = purchases.sort((a, b) => new Date(b.purchasedAt || b.updatedAt) - new Date(a.purchasedAt || a.updatedAt));
     selectedCustomerId = savedCustomers[0]?.id || '';
     if (typeof draft?.hasUnfinalizedChanges === 'boolean') {
       calculationHasUnsavedChanges = draft.hasUnfinalizedChanges;
@@ -2313,13 +2654,21 @@ function resetRuntimeForLocalOwner() {
   state.optimize = true;
   state.installation = { type: 'lona', basis: 'm2', quantity: 0, unitPrice: 0, travel: 0, autoQuantity: true, supplies: [] };
   state.salePrice = 0;
+  state.applicationSalePrice = 0;
   state.otherCosts = 0;
   state.targetMargin = 35;
   savedMaterials = [];
   savedCatalogItems = [];
   savedQuotes = [];
   savedCustomers = [];
+  savedTeamTasks = [];
+  savedPurchases = [];
   selectedCustomerId = '';
+  teamAccess = { team_enabled: false, dev_account: false, setup_required: false };
+  teamOperator = null;
+  teamOperatorSessionToken = '';
+  teamMembers = [];
+  try { localStorage.removeItem(TEAM_SESSION_KEY); } catch { /* optional */ }
   accountProfile = null;
   billingEntitlement = null;
   billingHistory = [];
@@ -2439,6 +2788,7 @@ function hydrateState(source, { inferDefaultText = false } = {}) {
     }) : [],
   };
   state.salePrice = positive(source.salePrice);
+  state.applicationSalePrice = positive(source.applicationSalePrice);
   state.otherCosts = positive(source.otherCosts);
   state.targetMargin = Math.min(99.9, Math.max(0, num(source.targetMargin, 35)));
 }
@@ -2462,6 +2812,10 @@ function normalizeMaterial(material, { inferDefaultWidth = false } = {}) {
     rotate: material.rotate !== false,
     laminationMaterialId: material.laminationMaterialId || null,
     _syncUpdatedAt: material._syncUpdatedAt || undefined,
+    _ownerOperatorId: material._ownerOperatorId || null,
+    _isShared: material._isShared === true,
+    _cloudVersionAt: material._cloudVersionAt || null,
+    _cloudDirty: material._cloudDirty === true,
   };
 }
 
@@ -2585,6 +2939,7 @@ function renderStaticControls() {
   setValue('installation-unit-price', state.installation.unitPrice);
   setValue('installation-travel', state.installation.travel);
   setValue('sale-price', state.salePrice);
+  setValue('application-sale-price', state.applicationSalePrice);
   setValue('other-costs', state.otherCosts);
   setValue('target-margin', state.targetMargin);
   setToggle('optimize-button', state.optimize);
@@ -2702,6 +3057,297 @@ function renderSupplies() {
   `).join('');
 }
 
+function businessMonthKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).formatToParts(date);
+  return `${parts.find((part) => part.type === 'year')?.value}-${parts.find((part) => part.type === 'month')?.value}`;
+}
+
+function selectedFinanceMonth() {
+  const input = document.getElementById('finance-month');
+  if (input && !input.value) input.value = businessMonthKey();
+  return input?.value || businessMonthKey();
+}
+
+function quoteMonth(quote) {
+  const date = quote.status === 'approved' ? (quote.approvedAt || quote.updatedAt) : quote.updatedAt;
+  return businessMonthKey(date);
+}
+
+function quoteApplicationCharge(quote) {
+  return Math.max(0, num(quote.applicationSalePrice));
+}
+
+function quoteMaterialCost(quote) {
+  if (Number.isFinite(Number(quote.materialCost))) return Number(quote.materialCost);
+  return Math.max(0, num(quote.totalCost) - quoteApplicationCharge(quote) - num(quote.otherCosts));
+}
+
+function renderMetricCards(container, cards) {
+  if (!container) return;
+  container.innerHTML = cards.map((item) => `<article class="business-metric-card ${item.className || ''}"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong>${item.note ? `<small>${escapeHtml(item.note)}</small>` : ''}</article>`).join('');
+}
+
+function renderTeamWorkspace() {
+  const view = document.getElementById('team-view');
+  if (!view) return;
+  if (!teamAccess.team_enabled || !teamOperator) {
+    view.querySelectorAll('.team-record-list').forEach((element) => { element.innerHTML = '<div class="empty-state"><strong>Acesse com seu PIN</strong><p>Os dados de equipe aparecem depois da validação do PIN.</p></div>'; });
+    return;
+  }
+  const month = businessMonthKey();
+  const mine = savedQuotes.filter((quote) => quote._ownerOperatorId === teamOperator.id);
+  const monthQuotes = mine.filter((quote) => quoteMonth(quote) === month);
+  const approved = monthQuotes.filter((quote) => quote.status === 'approved');
+  const pending = monthQuotes.filter((quote) => quote.status !== 'approved');
+  const label = document.getElementById('team-current-operator');
+  if (label) label.textContent = `${teamOperator.name} · ${teamOperator.role === 'admin' ? 'ADM' : 'Operador'}`;
+  renderMetricCards(document.getElementById('team-operator-metrics'), [
+    { label: 'Orçamentos no mês', value: String(monthQuotes.length) },
+    { label: 'Aprovados', value: String(approved.length), className: 'metric-success' },
+    { label: 'Pendentes', value: String(pending.length) },
+    { label: 'Venda aprovada', value: formatMoney(approved.reduce((sum, quote) => sum + num(quote.salePrice), 0)) },
+    { label: 'Lucro aprovado estimado', value: formatMoney(approved.reduce((sum, quote) => sum + num(quote.profit), 0)), className: 'metric-success' },
+  ]);
+  const tasks = teamOperator.role === 'admin'
+    ? savedTeamTasks
+    : savedTeamTasks.filter((task) => task.assignedOperatorId === teamOperator.id || task._ownerOperatorId === teamOperator.id);
+  renderTeamTaskList(document.getElementById('team-task-list'), tasks);
+  const approvedContainer = document.getElementById('team-approved-quotes');
+  const latestApproved = mine.filter((quote) => quote.status === 'approved').sort((a, b) => new Date(b.approvedAt || b.updatedAt) - new Date(a.approvedAt || a.updatedAt)).slice(0, 8);
+  if (approvedContainer) approvedContainer.innerHTML = latestApproved.length ? latestApproved.map((quote) => `<article class="team-list-row"><div><strong>${escapeHtml(quote.name || 'Orçamento sem nome')}</strong><small>${escapeHtml(quote.snapshot?.clientQuote?.clientName || 'Sem cliente')} · ${escapeHtml(formatDate(quote.approvedAt || quote.updatedAt))}</small></div><div class="team-list-value"><strong>${formatMoney(num(quote.salePrice))}</strong><small>lucro ${formatMoney(num(quote.profit))}</small></div></article>`).join('') : '<div class="empty-state"><strong>Nenhum orçamento aprovado neste histórico</strong><p>Quando um orçamento seu for aprovado, ele aparecerá aqui.</p></div>';
+}
+
+function renderTeamTaskList(container, tasks) {
+  if (!container) return;
+  const ordered = [...tasks].sort((a, b) => new Date(a.dueAt || 0) - new Date(b.dueAt || 0));
+  container.innerHTML = ordered.length ? ordered.map((task) => {
+    const type = task.type === 'visit' ? 'Visita' : 'Orçamento a calcular';
+    const owner = teamAccess.team_enabled ? teamOwnerLabel(task.assignedOperatorId || task._ownerOperatorId) : '';
+    return `<article class="team-list-row"><div><span class="team-type-badge">${type}</span><strong>${escapeHtml(task.title || task.name || 'Atividade')}</strong><small>${escapeHtml(formatDate(task.dueAt))}${owner ? ` · ${escapeHtml(owner)}` : ''}${task.details ? ` · ${escapeHtml(task.details)}` : ''}</small></div><div class="team-row-actions"><span class="quote-status ${task.status === 'done' ? 'approved' : ''}">${task.status === 'done' ? 'Concluída' : 'Pendente'}</span>${task.status !== 'done' && (teamOperator?.role === 'admin' || task._ownerOperatorId === teamOperator?.id || task.assignedOperatorId === teamOperator?.id) ? `<button class="secondary-button small-button" type="button" data-action="complete-team-task" data-id="${escapeHtml(task.id)}">Concluir</button>` : ''}</div></article>`;
+  }).join('') : '<div class="empty-state"><strong>Agenda vazia</strong><p>Agende uma visita ou um orçamento para calcular.</p></div>';
+}
+
+async function renderAdminWorkspace() {
+  if (!teamAccess.team_enabled || teamOperator?.role !== 'admin') return;
+  const month = businessMonthKey();
+  const quotes = savedQuotes;
+  const monthQuotes = quotes.filter((quote) => quoteMonth(quote) === month);
+  const approved = monthQuotes.filter((quote) => quote.status === 'approved');
+  const pending = monthQuotes.filter((quote) => quote.status !== 'approved');
+  const monthPurchases = savedPurchases.filter((purchase) => businessMonthKey(purchase.purchasedAt) === month);
+  renderMetricCards(document.getElementById('team-admin-summary'), [
+    { label: 'Operadores ativos', value: String(teamMembers.filter((member) => member.active).length) },
+    { label: 'Orçamentos aprovados no mês', value: String(approved.length), className: 'metric-success' },
+    { label: 'Venda aprovada', value: formatMoney(approved.reduce((sum, quote) => sum + num(quote.salePrice), 0)) },
+    { label: 'Em aberto', value: `${pending.length} · ${formatMoney(pending.reduce((sum, quote) => sum + num(quote.salePrice), 0))}` },
+    { label: 'Compras registradas', value: formatMoney(monthPurchases.reduce((sum, purchase) => sum + num(purchase.total), 0)) },
+    { label: 'Lucro aprovado estimado', value: formatMoney(approved.reduce((sum, quote) => sum + num(quote.profit), 0)), className: 'metric-success' },
+  ]);
+  const metrics = document.getElementById('team-admin-operator-metrics');
+  if (metrics) metrics.innerHTML = teamMembers.map((member) => {
+    const operatorQuotes = monthQuotes.filter((quote) => quote._ownerOperatorId === member.id);
+    const operatorApproved = operatorQuotes.filter((quote) => quote.status === 'approved');
+    const operatorPending = operatorQuotes.filter((quote) => quote.status !== 'approved');
+    return `<article class="team-list-row"><div><strong>${escapeHtml(member.name)}</strong><small>${member.role === 'admin' ? 'Administrador' : 'Operador'} · ${member.active ? 'Ativo' : 'Inativo'}</small></div><div class="team-list-value"><strong>${operatorQuotes.length} orçamento(s)</strong><small>${operatorApproved.length} aprovado(s) · ${operatorPending.length} pendente(s) · venda ${formatMoney(operatorApproved.reduce((sum, quote) => sum + num(quote.salePrice), 0))} · lucro ${formatMoney(operatorApproved.reduce((sum, quote) => sum + num(quote.profit), 0))}</small></div></article>`;
+  }).join('') || '<div class="empty-state"><strong>Nenhum membro cadastrado</strong><p>Cadastre o primeiro operador abaixo.</p></div>';
+  const memberList = document.getElementById('team-admin-members');
+  if (memberList) memberList.innerHTML = teamMembers.map((member) => `<article class="team-list-row"><div><strong>${escapeHtml(member.name)}</strong><small>${member.role === 'admin' ? 'Administrador' : 'Operador'} · ${member.active ? 'Acesso ativo' : 'Acesso suspenso'}</small></div><div class="team-row-actions">${member.id !== teamOperator.id ? `${member.active ? `<button class="secondary-button small-button" type="button" data-action="edit-team-member" data-id="${escapeHtml(member.id)}">Redefinir PIN</button>` : ''}<button class="secondary-button small-button" type="button" data-action="toggle-team-member" data-id="${escapeHtml(member.id)}" data-active="${member.active ? 'false' : 'true'}">${member.active ? 'Suspender' : 'Reativar'}</button>` : ''}</div></article>`).join('');
+  const review = document.getElementById('team-admin-catalog-review');
+  const catalog = [...savedMaterials, ...savedCatalogItems].filter((item) => !item._isShared);
+  if (review) review.innerHTML = catalog.length ? catalog.map((item) => {
+    const recordType = item.catalogCategory ? catalogRecordType(item.catalogCategory) : 'material';
+    const itemCategory = item.catalogCategory ? CATALOG_CATEGORY_LABELS[item.catalogCategory] : 'Material base';
+    return `<article class="team-list-row"><div><strong>${escapeHtml(item.name)}</strong><small>${itemCategory} · criado por ${escapeHtml(teamOwnerLabel(item._ownerOperatorId))} · ${formatMoney(item.unitPrice ?? item.price)}</small></div><div class="team-row-actions"><button class="primary-button small-button" type="button" data-action="share-team-catalog" data-id="${escapeHtml(item.id)}" data-record-type="${recordType}" data-shared="true">Adicionar à biblioteca geral</button></div></article>`;
+  }).join('') : '<div class="empty-state"><strong>Nenhum item privado aguardando decisão</strong><p>Novos materiais cadastrados pelos operadores aparecerão aqui.</p></div>';
+}
+
+function renderFinanceWorkspace() {
+  const container = document.getElementById('finance-monthly-metrics');
+  if (!container) return;
+  const month = selectedFinanceMonth();
+  const quotes = currentOperatorQuotes().filter((quote) => quoteMonth(quote) === month);
+  const purchases = currentOperatorRecords(savedPurchases).filter((purchase) => businessMonthKey(purchase.purchasedAt) === month);
+  const approved = quotes.filter((quote) => quote.status === 'approved');
+  const pending = quotes.filter((quote) => quote.status !== 'approved');
+  renderMetricCards(container, [
+    { label: 'Custo de materiais aprovados', value: formatMoney(approved.reduce((sum, quote) => sum + quoteMaterialCost(quote), 0)) },
+    { label: 'Orçamentos aprovados', value: formatMoney(approved.reduce((sum, quote) => sum + num(quote.salePrice), 0)), className: 'metric-success', note: `${approved.length} serviço(s)` },
+    { label: 'Orçamentos pendentes', value: String(pending.length), note: formatMoney(pending.reduce((sum, quote) => sum + num(quote.salePrice), 0)) },
+    { label: 'Cobrado por aplicação', value: formatMoney(approved.reduce((sum, quote) => sum + quoteApplicationCharge(quote), 0)), note: 'Informado como parte do preço de venda' },
+    { label: 'Compras do catálogo', value: formatMoney(purchases.reduce((sum, purchase) => sum + num(purchase.total), 0)) },
+    { label: 'Lucro estimado dos orçamentos', value: formatMoney(quotes.reduce((sum, quote) => sum + num(quote.profit), 0)), className: 'metric-success', note: 'Não desconta compras registradas em separado' },
+  ]);
+  const purchaseList = document.getElementById('finance-purchases-list');
+  if (purchaseList) purchaseList.innerHTML = purchases.length ? purchases.sort((a, b) => new Date(b.purchasedAt) - new Date(a.purchasedAt)).map((purchase) => `<article class="team-list-row"><div><strong>${escapeHtml(purchase.itemName)}</strong><small>${escapeHtml(formatDate(purchase.purchasedAt))} · ${escapeHtml(purchase.supplier || 'Sem fornecedor')} · qtd. ${formatNumber(num(purchase.quantity), 2)}${purchase.notes ? ` · ${escapeHtml(purchase.notes)}` : ''}</small></div><div class="team-row-actions"><strong>${formatMoney(num(purchase.total))}</strong>${canEditTeamRecord(purchase) ? `<button class="secondary-button small-button" type="button" data-action="delete-purchase" data-id="${escapeHtml(purchase.id)}">Remover</button>` : ''}</div></article>`).join('') : '<div class="empty-state"><strong>Nenhuma compra neste mês</strong><p>Registre uma compra ao receber materiais ou insumos.</p></div>';
+  const quoteList = document.getElementById('finance-quotes-list');
+  if (quoteList) quoteList.innerHTML = quotes.length ? quotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).map((quote) => `<article class="team-list-row"><div><strong>${escapeHtml(quote.name || 'Orçamento sem nome')}</strong><small>${escapeHtml(quote.snapshot?.clientQuote?.clientName || 'Sem cliente')} · ${quote.status === 'approved' ? 'Aprovado' : 'Pendente'}${teamAccess.team_enabled ? ` · ${escapeHtml(teamOwnerLabel(quote._ownerOperatorId))}` : ''}</small></div><div class="team-list-value"><strong>${formatMoney(num(quote.salePrice))}</strong><small>custo ${formatMoney(num(quote.totalCost))} · lucro ${formatMoney(num(quote.profit))}</small></div></article>`).join('') : '<div class="empty-state"><strong>Nenhum orçamento neste mês</strong><p>Orçamentos salvos aparecerão por mês de referência.</p></div>';
+}
+
+function renderMaterialsWorkspace() {
+  renderSavedMaterials();
+  renderCatalogItems();
+  if (!document.getElementById('material-picker-modal')?.hidden) renderMaterialPicker();
+}
+
+function openTeamTaskForm() {
+  const form = document.getElementById('team-task-form');
+  if (!form) return;
+  form.reset();
+  const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  setValue('team-task-due', now);
+  const assignee = document.getElementById('team-task-assignee');
+  const assigneeField = document.getElementById('team-task-assignee-field');
+  const isAdmin = teamOperator?.role === 'admin';
+  if (assigneeField) assigneeField.hidden = !isAdmin;
+  if (assignee) {
+    const active = teamMembers.filter((member) => member.active);
+    assignee.innerHTML = active.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}</option>`).join('');
+    assignee.value = isAdmin ? (active[0]?.id || teamOperator.id) : teamOperator.id;
+  }
+  document.getElementById('team-task-modal').hidden = false;
+}
+
+async function submitTeamTask(event) {
+  event.preventDefault();
+  if (!teamOperator) return showToast('Acesse com seu PIN para salvar atividades.', 'error');
+  const task = {
+    id: uid('task'), type: document.getElementById('team-task-type').value,
+    title: document.getElementById('team-task-name').value.trim(), dueAt: new Date(document.getElementById('team-task-due').value).toISOString(),
+    assignedOperatorId: teamOperator.role === 'admin' ? (document.getElementById('team-task-assignee').value || teamOperator.id) : teamOperator.id,
+    details: document.getElementById('team-task-details').value.trim(), status: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    _ownerOperatorId: teamOperator.id,
+  };
+  try {
+    await storePut('tasks', task);
+    savedTeamTasks = [task, ...savedTeamTasks];
+    document.getElementById('team-task-modal').hidden = true;
+    renderTeamWorkspace();
+    showToast('Atividade adicionada à agenda.');
+  } catch (error) { showToast(error.message || 'Não foi possível salvar a atividade.', 'error'); }
+}
+
+async function saveTeamMember(event) {
+  event.preventDefault();
+  if (!teamOperatorSessionToken || teamOperator?.role !== 'admin') return showToast('O PIN ADM é necessário para alterar a equipe.', 'error');
+  const id = document.getElementById('team-member-id').value || null;
+  const body = {
+    p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken,
+    p_operator_id: id, p_name: document.getElementById('team-member-name').value.trim(),
+    p_pin: document.getElementById('team-member-pin').value, p_role: document.getElementById('team-member-role').value,
+  };
+  try {
+    await cloudFetch('/rest/v1/rpc/team_admin_save_member', { method: 'POST', token: cloudSession.access_token, body });
+    document.getElementById('team-member-form').reset();
+    setValue('team-member-id', '');
+    await loadTeamMembers();
+    showToast(id ? 'PIN redefinido.' : 'Membro cadastrado.');
+  } catch (error) { showToast(error.message || 'Não foi possível salvar o membro.', 'error'); }
+}
+
+async function toggleTeamMember(id, active) {
+  try {
+    await cloudFetch('/rest/v1/rpc/team_admin_set_member_active', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken, p_operator_id: id, p_active: active },
+    });
+    await loadTeamMembers();
+  } catch (error) { showToast(error.message || 'Não foi possível alterar este acesso.', 'error'); }
+}
+
+async function completeTeamTask(id) {
+  const task = savedTeamTasks.find((entry) => entry.id === id);
+  if (!task || !teamOperator) return;
+  const canComplete = teamOperator.role === 'admin' || task._ownerOperatorId === teamOperator.id || task.assignedOperatorId === teamOperator.id;
+  if (!canComplete) return showToast('Esta atividade está atribuída a outro operador.', 'error');
+  const updated = { ...task, status: 'done', updatedAt: new Date().toISOString() };
+  try {
+    await storePut('tasks', updated);
+    savedTeamTasks = savedTeamTasks.map((entry) => entry.id === id ? updated : entry);
+    renderTeamWorkspace();
+    showToast('Atividade concluída.');
+  } catch (error) { showToast(error.message || 'Não foi possível concluir a atividade.', 'error'); }
+}
+
+function editTeamMember(id) {
+  const member = teamMembers.find((entry) => entry.id === id);
+  if (!member || member.id === teamOperator?.id) return showToast('Para redefinir seu próprio PIN, outro administrador deve fazer a alteração.', 'error');
+  setValue('team-member-id', member.id);
+  setValue('team-member-name', member.name);
+  setValue('team-member-role', member.role);
+  setValue('team-member-pin', '');
+  const pin = document.getElementById('team-member-pin');
+  if (pin) pin.required = true;
+  document.getElementById('team-member-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  pin?.focus({ preventScroll: true });
+}
+
+async function setCatalogVisibility(recordType, recordId, shared) {
+  try {
+    await cloudFetch('/rest/v1/rpc/team_admin_set_catalog_shared', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken, p_record_type: recordType, p_record_id: recordId, p_shared: shared },
+    });
+    await syncCloudNow();
+    await renderAdminWorkspace();
+    showToast(shared ? 'Item aprovado e incluído na biblioteca da empresa.' : 'Item voltou a ficar privado.');
+  } catch (error) { showToast(error.message || 'Não foi possível alterar a biblioteca.', 'error'); }
+}
+
+function openPurchaseForm(defaultId = '') {
+  const select = document.getElementById('purchase-catalog-item');
+  const items = [...savedMaterials.map((item) => ({ ...item, categoryLabel: 'Material base' })), ...savedCatalogItems.map((item) => ({ ...item, categoryLabel: CATALOG_CATEGORY_LABELS[item.catalogCategory] || 'Catálogo' }))].filter(canSeeTeamCatalogItem);
+  if (!items.length) return showToast('Cadastre um material ou insumo no catálogo antes de registrar a compra.', 'error');
+  select.innerHTML = items.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} · ${item.categoryLabel}</option>`).join('');
+  if (defaultId && items.some((item) => item.id === defaultId)) select.value = defaultId;
+  document.getElementById('purchase-date').value = new Date().toISOString().slice(0, 10);
+  setValue('purchase-quantity', 1);
+  setValue('purchase-total', 0);
+  setValue('purchase-supplier', '');
+  setValue('purchase-notes', '');
+  document.getElementById('purchase-modal').hidden = false;
+}
+
+function recordCatalogPurchase(id) {
+  openPurchaseForm(id);
+}
+
+async function submitCatalogPurchase(event) {
+  event.preventDefault();
+  const id = document.getElementById('purchase-catalog-item').value;
+  const item = [...savedMaterials, ...savedCatalogItems].find((entry) => entry.id === id);
+  if (!item) return showToast('Selecione um item disponível no catálogo.', 'error');
+  const purchase = {
+    id: uid('purchase'), itemId: id, itemName: item.name, category: item.catalogCategory || 'material',
+    quantity: positive(document.getElementById('purchase-quantity').value, 1), total: positive(document.getElementById('purchase-total').value),
+    purchasedAt: new Date(`${document.getElementById('purchase-date').value}T12:00:00`).toISOString(),
+    supplier: document.getElementById('purchase-supplier').value.trim(), notes: document.getElementById('purchase-notes').value.trim(),
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), _ownerOperatorId: teamOperator?.id || null,
+  };
+  try {
+    await storePut('purchases', purchase);
+    savedPurchases = [purchase, ...savedPurchases];
+    document.getElementById('purchase-modal').hidden = true;
+    renderFinanceWorkspace();
+    renderAdminWorkspace();
+    showToast('Compra adicionada ao financeiro.');
+  } catch (error) { showToast(error.message || 'Não foi possível registrar a compra.', 'error'); }
+}
+
+async function deleteCatalogPurchase(id) {
+  const purchase = savedPurchases.find((entry) => entry.id === id);
+  if (!purchase || !canEditTeamRecord(purchase)) return showToast('Somente quem registrou a compra ou o ADM pode removê-la.', 'error');
+  if (!window.confirm(`Remover o lançamento de compra de “${purchase.itemName}”?`)) return;
+  try {
+    await storeDelete('purchases', id);
+    savedPurchases = savedPurchases.filter((entry) => entry.id !== id);
+    renderFinanceWorkspace();
+    renderAdminWorkspace();
+    showToast('Lançamento removido do financeiro.');
+  } catch (error) { showToast(error.message || 'Não foi possível remover esta compra.', 'error'); }
+}
+
 function renderQuotes() {
   const container = document.getElementById('quotes-list');
   if (!container) return;
@@ -2709,13 +3355,29 @@ function renderQuotes() {
     container.innerHTML = '<div class="empty-state"><strong>Nenhum orçamento salvo ainda</strong><p>Depois de preencher um cálculo, use “Salvar orçamento” para encontrá-lo aqui.</p></div>';
     return;
   }
-  container.innerHTML = savedQuotes.map((quote) => `
+  container.innerHTML = savedQuotes.map((quote) => {
+    const editable = canEditTeamRecord(quote);
+    const owner = teamAccess.team_enabled ? ` · ${escapeHtml(teamOwnerLabel(quote._ownerOperatorId))}` : '';
+    return `
     <article class="quote-card">
-      <div><div class="quote-card-title">${escapeHtml(quote.name || 'Orçamento sem nome')}</div><div class="quote-card-meta">${escapeHtml(quote.snapshot?.clientQuote?.clientName || 'Sem cliente vinculado')} · ${escapeHtml(formatDate(quote.updatedAt))} · ${quote.piecesCount || 0} peça(s)</div></div>
+      <div><div class="quote-card-title">${escapeHtml(quote.name || 'Orçamento sem nome')}</div><div class="quote-card-meta">${escapeHtml(quote.snapshot?.clientQuote?.clientName || 'Sem cliente vinculado')} · ${escapeHtml(formatDate(quote.updatedAt))} · ${quote.piecesCount || 0} peça(s)${owner}</div></div>
       <div class="quote-card-figure"><div class="quote-card-price">${formatMoney(num(quote.salePrice))}</div><div class="quote-card-label">venda · lucro ${quote.status === 'approved' ? 'realizado' : 'estimado'} ${formatMoney(num(quote.profit))}</div></div>
-      <div class="quote-actions"><span class="quote-status ${quote.status === 'approved' ? 'approved' : ''}">${quote.status === 'approved' ? 'Aprovado' : 'Pendente'}</span><button class="secondary-button small-button" type="button" data-action="toggle-quote-approval" data-id="${escapeHtml(quote.id)}">${quote.status === 'approved' ? 'Reabrir' : 'Aprovar'}</button><button class="secondary-button small-button" type="button" data-action="load-quote" data-id="${escapeHtml(quote.id)}">Abrir</button><button class="icon-button" type="button" data-action="delete-quote" data-id="${escapeHtml(quote.id)}" title="Excluir orçamento">×</button></div>
+      <div class="quote-actions"><span class="quote-status ${quote.status === 'approved' ? 'approved' : ''}">${quote.status === 'approved' ? 'Aprovado' : 'Pendente'}</span>${editable ? `<button class="secondary-button small-button" type="button" data-action="toggle-quote-approval" data-id="${escapeHtml(quote.id)}">${quote.status === 'approved' ? 'Reabrir' : 'Aprovar'}</button><button class="secondary-button small-button" type="button" data-action="load-quote" data-id="${escapeHtml(quote.id)}">Editar</button><button class="icon-button" type="button" data-action="delete-quote" data-id="${escapeHtml(quote.id)}" title="Excluir orçamento">×</button>` : `<button class="secondary-button small-button" type="button" data-action="view-team-quote" data-id="${escapeHtml(quote.id)}">Visualizar</button>`}</div>
     </article>
-  `).join('');
+  `;
+  }).join('');
+}
+
+function viewTeamQuote(id) {
+  const quote = savedQuotes.find((item) => item.id === id);
+  if (!quote) return;
+  const snapshot = quote.snapshot || {};
+  const pieces = Array.isArray(snapshot.pieces) ? snapshot.pieces : [];
+  const materials = Array.isArray(snapshot.materials) ? snapshot.materials : [];
+  const content = document.getElementById('team-quote-content');
+  if (!content) return;
+  content.innerHTML = `<div class="modal-heading"><div><span class="section-kicker">ORÇAMENTO DA EQUIPE · SOMENTE LEITURA</span><h2 id="team-quote-title">${escapeHtml(quote.name || 'Orçamento sem nome')}</h2><p class="muted-copy">${escapeHtml(snapshot.clientQuote?.clientName || 'Sem cliente')} · criado por ${escapeHtml(teamOwnerLabel(quote._ownerOperatorId))}</p></div><span class="quote-status ${quote.status === 'approved' ? 'approved' : ''}">${quote.status === 'approved' ? 'Aprovado' : 'Pendente'}</span></div><div class="business-metrics-grid quote-readonly-metrics"><article class="business-metric-card"><span>Venda</span><strong>${formatMoney(num(quote.salePrice))}</strong></article><article class="business-metric-card"><span>Custo</span><strong>${formatMoney(num(quote.totalCost))}</strong></article><article class="business-metric-card"><span>Lucro estimado</span><strong>${formatMoney(num(quote.profit))}</strong></article><article class="business-metric-card"><span>Atualizado</span><strong>${escapeHtml(formatDate(quote.updatedAt))}</strong></article></div><section class="team-quote-details"><h3>Materiais</h3>${materials.length ? `<ul>${materials.map((material) => `<li>${escapeHtml(material.name)} · ${escapeHtml(formatNumber(num(material.widthCm), 1))} cm · ${formatMoney(num(material.price))}</li>`).join('')}</ul>` : '<p class="muted-copy">Sem materiais detalhados.</p>'}<h3>Peças</h3>${pieces.length ? `<ul>${pieces.map((piece) => `<li>${escapeHtml(piece.description || 'Peça')} · ${escapeHtml(formatNumber(num(piece.widthCm), 1))} × ${escapeHtml(formatNumber(num(piece.heightCm), 1))} cm · ${escapeHtml(String(piece.quantity || 1))} un.</li>`).join('')}</ul>` : '<p class="muted-copy">Sem peças detalhadas.</p>'}</section>`;
+  document.getElementById('team-quote-modal').hidden = false;
 }
 
 function normalizeCustomerMatch(value) {
@@ -2905,6 +3567,7 @@ async function deleteCustomer(id) {
 async function setQuoteApproval(id) {
   const quote = savedQuotes.find((entry) => entry.id === id);
   if (!quote) return;
+  if (!canEditTeamRecord(quote)) return showToast('Somente o PIN que criou este orçamento pode alterá-lo.', 'error');
   const approved = quote.status !== 'approved';
   if (approved && num(quote.salePrice) <= 0) {
     showToast('Defina um valor de venda antes de aprovar este orçamento.', 'error');
@@ -2940,11 +3603,12 @@ function renderSavedMaterialVolumePricing() {
 function renderSavedMaterials() {
   const container = document.getElementById('saved-materials-list');
   if (!container) return;
-  if (!savedMaterials.length) {
+  const visibleMaterials = savedMaterials.filter(canSeeTeamCatalogItem);
+  if (!visibleMaterials.length) {
     container.innerHTML = '<div class="empty-state"><strong>Catálogo vazio</strong><p>Cadastre as mídias que você mais usa para reutilizar dimensões e preços nos cálculos.</p></div>';
     return;
   }
-  container.innerHTML = savedMaterials.map((material) => {
+  container.innerHTML = visibleMaterials.map((material) => {
     const measure = material.calculationMode === 'area'
       ? 'Área total'
       : material.calculationMode === 'sheet'
@@ -2953,10 +3617,12 @@ function renderSavedMaterials() {
     const unit = materialPricingUnit(material);
     const charge = unit === 'chapa' ? 'R$/chapa' : `R$/${unit === 'm' ? 'metro linear' : unit}`;
     const useLabel = material.calculationMode === 'sheet' ? 'Usar chapa' : material.calculationMode === 'area' ? 'Usar material' : 'Usar bobina';
+    const editable = canEditTeamRecord(material) && material._isShared !== true;
+    const visibility = teamAccess.team_enabled ? `<span class="team-type-badge">${material._isShared ? 'Biblioteca da empresa' : `Privado · ${escapeHtml(teamOwnerLabel(material._ownerOperatorId))}`}</span>` : '';
     return `
       <article class="saved-material-card">
-        <div><div class="saved-material-card-title">${escapeHtml(material.name)}</div>${material.supplier ? `<div class="saved-material-card-supplier"><span>Fornecedor</span>${escapeHtml(material.supplier)}</div>` : ''}<div class="saved-material-card-meta">${measure} · ${charge} · ${formatMoney(material.price)}${material.volumePricing?.length ? ` · ${material.volumePricing.length} faixa(s) por volume` : ''}</div></div>
-        <div class="saved-material-actions"><button class="secondary-button small-button" type="button" data-action="use-saved-material" data-id="${escapeHtml(material.id)}">${useLabel}</button><button class="icon-button" type="button" data-action="edit-saved-material" data-id="${escapeHtml(material.id)}" title="Editar">✎</button><button class="icon-button" type="button" data-action="delete-saved-material" data-id="${escapeHtml(material.id)}" title="Excluir">×</button></div>
+        <div><div class="saved-material-card-title">${escapeHtml(material.name)}</div>${visibility}${material.supplier ? `<div class="saved-material-card-supplier"><span>Fornecedor</span>${escapeHtml(material.supplier)}</div>` : ''}<div class="saved-material-card-meta">${measure} · ${charge} · ${formatMoney(material.price)}${material.volumePricing?.length ? ` · ${material.volumePricing.length} faixa(s) por volume` : ''}</div></div>
+        <div class="saved-material-actions"><button class="secondary-button small-button" type="button" data-action="use-saved-material" data-id="${escapeHtml(material.id)}">${useLabel}</button><button class="secondary-button small-button" type="button" data-action="record-catalog-purchase" data-id="${escapeHtml(material.id)}">Registrar compra</button>${editable ? `<button class="icon-button" type="button" data-action="edit-saved-material" data-id="${escapeHtml(material.id)}" title="Editar">✎</button><button class="icon-button" type="button" data-action="delete-saved-material" data-id="${escapeHtml(material.id)}" title="Excluir">×</button>` : ''}${teamOperator?.role === 'admin' && teamAccess.team_enabled ? `<button class="secondary-button small-button" type="button" data-action="share-team-catalog" data-id="${escapeHtml(material.id)}" data-record-type="material" data-shared="${material._isShared ? 'false' : 'true'}">${material._isShared ? 'Tornar privado' : 'Incluir na biblioteca'}</button>` : ''}</div>
       </article>
     `;
   }).join('');
@@ -2964,21 +3630,25 @@ function renderSavedMaterials() {
 function renderCatalogItems() {
   const container = document.getElementById('catalog-items-list');
   if (!container) return;
-  if (!savedCatalogItems.length) {
+  const visibleCatalogItems = savedCatalogItems.filter(canSeeTeamCatalogItem);
+  if (!visibleCatalogItems.length) {
     container.innerHTML = '<div class="empty-state"><strong>Nenhum item cadastrado</strong><p>Organize acabamentos, insumos, mão de obra e extras com a base de cobrança de cada item.</p></div>';
     return;
   }
   const categories = ['finish', 'supply', 'labor', 'extra'];
   const groups = categories.map((category) => {
-    const items = savedCatalogItems.filter((item) => item.catalogCategory === category);
+    const items = visibleCatalogItems.filter((item) => item.catalogCategory === category);
     if (!items.length) return '';
     const cards = items.map((item) => {
       const basis = catalogPricingBasis(item);
       const charge = basis === 'fixed' ? 'valor fixo' : `por ${basis === 'unit' ? catalogPricingUnit(item, basis) : CATALOG_BASIS_LABELS[basis]}`;
+      const editable = canEditTeamRecord(item) && item._isShared !== true;
+      const visibility = teamAccess.team_enabled ? `<span class="team-type-badge">${item._isShared ? 'Biblioteca da empresa' : `Privado · ${escapeHtml(teamOwnerLabel(item._ownerOperatorId))}`}</span>` : '';
+      const recordType = catalogRecordType(item.catalogCategory);
       return `
         <article class="saved-material-card">
-          <div><div class="saved-material-card-title">${escapeHtml(item.name)}</div><div class="saved-material-card-meta">${formatMoney(item.unitPrice)} · ${charge}</div>${item.notes ? `<div class="saved-material-card-supplier">${escapeHtml(item.notes)}</div>` : ''}</div>
-          <div class="saved-material-actions"><button class="icon-button" type="button" data-action="edit-catalog-item" data-id="${escapeHtml(item.id)}" title="Editar">✎</button><button class="icon-button" type="button" data-action="delete-catalog-item" data-id="${escapeHtml(item.id)}" title="Excluir">×</button></div>
+          <div><div class="saved-material-card-title">${escapeHtml(item.name)}</div>${visibility}<div class="saved-material-card-meta">${formatMoney(item.unitPrice)} · ${charge}</div>${item.notes ? `<div class="saved-material-card-supplier">${escapeHtml(item.notes)}</div>` : ''}</div>
+          <div class="saved-material-actions"><button class="secondary-button small-button" type="button" data-action="record-catalog-purchase" data-id="${escapeHtml(item.id)}">Registrar compra</button>${editable ? `<button class="icon-button" type="button" data-action="edit-catalog-item" data-id="${escapeHtml(item.id)}" title="Editar">✎</button><button class="icon-button" type="button" data-action="delete-catalog-item" data-id="${escapeHtml(item.id)}" title="Excluir">×</button>` : ''}${teamOperator?.role === 'admin' && teamAccess.team_enabled ? `<button class="secondary-button small-button" type="button" data-action="share-team-catalog" data-id="${escapeHtml(item.id)}" data-record-type="${recordType}" data-shared="${item._isShared ? 'false' : 'true'}">${item._isShared ? 'Tornar privado' : 'Incluir na biblioteca'}</button>` : ''}</div>
         </article>
       `;
     }).join('');
@@ -3034,6 +3704,7 @@ function resetCatalogItemForm() {
 function editCatalogItem(id) {
   const item = savedCatalogItems.find((entry) => entry.id === id);
   if (!item) return;
+  if (!canEditTeamRecord(item) || item._isShared) return showToast('Este item só pode ser alterado pelo criador ou pelo ADM.', 'error');
   setValue('catalog-item-id', item.id);
   setValue('catalog-item-category', item.catalogCategory);
   setValue('catalog-item-basis', catalogPricingBasis(item));
@@ -3049,6 +3720,7 @@ async function submitCatalogItem(event) {
   event.preventDefault();
   const id = document.getElementById('catalog-item-id').value || `catalog:${uid('item')}`;
   const existing = savedCatalogItems.find((item) => item.id === id);
+  if (existing && (!canEditTeamRecord(existing) || existing._isShared)) return showToast('Este item só pode ser alterado pelo criador ou pelo ADM.', 'error');
   const item = {
     id,
     catalogCategory: document.getElementById('catalog-item-category').value,
@@ -3059,6 +3731,8 @@ async function submitCatalogItem(event) {
     notes: document.getElementById('catalog-item-notes').value.trim(),
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    _ownerOperatorId: existing?._ownerOperatorId || (teamAccess.team_enabled ? teamOperator?.id || null : null),
+    _isShared: existing?._isShared === true,
   };
   try {
     await storePut('materials', item);
@@ -3074,6 +3748,7 @@ async function submitCatalogItem(event) {
 
 async function deleteCatalogItem(id) {
   const item = savedCatalogItems.find((entry) => entry.id === id);
+  if (item && (!canEditTeamRecord(item) || item._isShared)) return showToast('Este item só pode ser excluído pelo criador ou pelo ADM.', 'error');
   if (!item || !window.confirm(`Excluir “${item.name}” do catálogo?`)) return;
   try {
     await storeDelete('materials', id);
@@ -3088,11 +3763,12 @@ async function deleteCatalogItem(id) {
 function renderMaterialPicker() {
   const container = document.getElementById('material-picker-list');
   if (!container) return;
-  if (!savedMaterials.length) {
+  const visibleMaterials = savedMaterials.filter(canSeeTeamCatalogItem);
+  if (!visibleMaterials.length) {
     container.innerHTML = '<div class="empty-state"><strong>Nenhum material salvo ainda</strong><p>Cadastre uma mídia no catálogo para usá-la em qualquer orçamento.</p><button class="secondary-button small-button" id="picker-open-catalog" type="button">Ir para o catálogo</button></div>';
     return;
   }
-  container.innerHTML = savedMaterials.map((material) => {
+  container.innerHTML = visibleMaterials.map((material) => {
     const measure = material.calculationMode === 'area'
       ? 'Área total · cobrança por m²'
       : material.calculationMode === 'sheet'
@@ -3922,6 +4598,12 @@ function calculateQuote() {
 let installationExpanded = true;
 
 function switchView(viewId) {
+  if ((viewId === 'team-view' || viewId === 'admin-view') && !teamAccess.team_enabled) return switchView('calculator-view');
+  if (viewId === 'admin-view' && teamOperator?.role !== 'admin') return switchView('team-view');
+  if (teamAccess.team_enabled && !teamOperator && ['team-view','admin-view','finance-view','materials-view','quotes-view','customers-view','calculator-view'].includes(viewId)) {
+    openTeamAccessModal(teamAccess.setup_required);
+    return;
+  }
   document.querySelectorAll('.view').forEach((view) => view.classList.toggle('active', view.id === viewId));
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === viewId));
   const labels = {
@@ -3929,6 +4611,9 @@ function switchView(viewId) {
     'quotes-view': ['HISTÓRICO LOCAL', 'Orçamentos'],
     'customers-view': ['RELACIONAMENTO', 'Clientes'],
     'materials-view': ['CATÁLOGO LOCAL', 'Materiais'],
+    'team-view': ['OPERAÇÃO', 'Equipe'],
+    'admin-view': ['ACESSO RESTRITO', 'Área de ADM'],
+    'finance-view': ['GESTÃO FINANCEIRA', 'Financeiro'],
     'help-view': ['GUIA RÁPIDO', 'Como usar'],
   };
   const [eyebrow, title] = labels[viewId] || labels['calculator-view'];
@@ -3942,6 +4627,9 @@ function switchView(viewId) {
     renderSavedMaterials();
     renderCatalogItems();
   }
+  if (viewId === 'team-view') renderTeamWorkspace();
+  if (viewId === 'admin-view') void renderAdminWorkspace();
+  if (viewId === 'finance-view') renderFinanceWorkspace();
 }
 
 function renderAll({ persistDraft = true } = {}) {
@@ -3955,6 +4643,9 @@ function renderAll({ persistDraft = true } = {}) {
   renderCustomers();
   renderSavedMaterials();
   renderCatalogItems();
+  renderTeamWorkspace();
+  void renderAdminWorkspace();
+  renderFinanceWorkspace();
   calculateAndRender({ persistDraft });
 }
 
@@ -3977,6 +4668,7 @@ function resetCurrentCalculation({ empty = false, message = 'Novo cálculo pront
   state.optimize = true;
   state.installation = { type: 'lona', basis: 'm2', quantity: 0, unitPrice: 0, travel: 0, autoQuantity: true, supplies: [] };
   state.salePrice = 0;
+  state.applicationSalePrice = 0;
   state.otherCosts = 0;
   state.targetMargin = 35;
   draftClearIntent = true;
@@ -4196,6 +4888,7 @@ function updateDirectField(element) {
   if (id === 'installation-unit-price') state.installation.unitPrice = positive(element.value);
   if (id === 'installation-travel') state.installation.travel = positive(element.value);
   if (id === 'sale-price') state.salePrice = positive(element.value);
+  if (id === 'application-sale-price') state.applicationSalePrice = positive(element.value);
   if (id === 'other-costs') state.otherCosts = positive(element.value);
   if (id === 'target-margin') state.targetMargin = Math.min(99.9, Math.max(0, num(element.value, 35)));
 }
@@ -4268,6 +4961,7 @@ async function saveQuote() {
   const sameApprovedQuote = existingQuote?.status === 'approved'
     && existingQuote.customerId === (state.clientQuote.customerId || null)
     && num(existingQuote.salePrice) === computed.salePrice
+    && num(existingQuote.applicationSalePrice) === state.applicationSalePrice
     && num(existingQuote.totalCost) === computed.totalCost
     && JSON.stringify(stableCloudValue(existingSnapshot)) === JSON.stringify(stableCloudValue(snapshot));
   const quote = {
@@ -4275,6 +4969,7 @@ async function saveQuote() {
     name,
     snapshot,
     salePrice: computed.salePrice,
+    applicationSalePrice: state.applicationSalePrice,
     totalCost: computed.totalCost,
     profit: computed.profit,
     customerId: state.clientQuote.customerId || null,
@@ -4283,6 +4978,10 @@ async function saveQuote() {
     updatedAt: new Date().toISOString(),
     piecesCount: state.pieces.reduce((sum, piece) => sum + Math.max(0, Math.floor(positive(piece.quantity, 1))), 0),
     materialsCount: state.materials.length,
+    materialCost: computed.materialCost,
+    applicationCharge: state.applicationSalePrice,
+    otherCosts: computed.otherCosts,
+    _ownerOperatorId: existingQuote?._ownerOperatorId || (teamAccess.team_enabled ? teamOperator?.id || null : null),
   };
   try {
     await storePut('quotes', quote);
@@ -4310,6 +5009,7 @@ async function saveQuote() {
 function loadQuote(id) {
   const quote = savedQuotes.find((item) => item.id === id);
   if (!quote?.snapshot) return;
+  if (!canEditTeamRecord(quote)) return viewTeamQuote(id);
   hydrateState(quote.snapshot);
   state.quoteId = quote.id;
   state.quoteName = quote.name;
@@ -4325,6 +5025,7 @@ function loadQuote(id) {
 async function deleteQuote(id) {
   const quote = savedQuotes.find((item) => item.id === id);
   if (!quote || !window.confirm(`Excluir “${quote.name}”?`)) return;
+  if (!canEditTeamRecord(quote)) return showToast('Somente o PIN que criou este orçamento pode excluí-lo.', 'error');
   try {
     await storeDelete('quotes', id);
     savedQuotes = savedQuotes.filter((item) => item.id !== id);
@@ -4356,6 +5057,8 @@ function exportBackup() {
     catalogItems: clone(savedCatalogItems),
     quotes: clone(savedQuotes),
     customers: clone(savedCustomers),
+    teamTasks: clone(savedTeamTasks),
+    purchases: clone(savedPurchases),
   };
   downloadFile(`grafiflow-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2));
   showToast('Backup exportado.');
@@ -4371,6 +5074,8 @@ async function importBackup(file) {
     if (Array.isArray(parsed.catalogItems)) savedCatalogItems = parsed.catalogItems.map((item) => ({ ...item, id: String(item.id).startsWith('catalog:') ? item.id : `catalog:${uid('item')}` }));
     if (Array.isArray(parsed.quotes)) savedQuotes = parsed.quotes;
     if (Array.isArray(parsed.customers)) savedCustomers = parsed.customers;
+    if (Array.isArray(parsed.teamTasks)) savedTeamTasks = parsed.teamTasks;
+    if (Array.isArray(parsed.purchases)) savedPurchases = parsed.purchases;
     draftClearIntent = false;
     calculationHasUnsavedChanges = Boolean(parsed.draft && !currentStateMatchesSavedQuote(state) && hasMeaningfulDraft(state));
     calculationBaseline = calculationHasUnsavedChanges ? savedQuoteSnapshotFor(state) : clone(state);
@@ -4379,6 +5084,8 @@ async function importBackup(file) {
     for (const item of savedCatalogItems) await storePut('materials', item);
     for (const quote of savedQuotes) await storePut('quotes', quote);
     for (const customer of savedCustomers) await storePut('customers', customer);
+    for (const task of savedTeamTasks) await storePut('tasks', task);
+    for (const purchase of savedPurchases) await storePut('purchases', purchase);
     renderAll({ persistDraft: false });
     renderCatalogItems();
     showToast('Backup importado com sucesso.');
@@ -4455,6 +5162,7 @@ function resetSavedMaterialForm() {
 function editSavedMaterial(id) {
   const material = savedMaterials.find((item) => item.id === id);
   if (!material) return;
+  if (!canEditTeamRecord(material) || material._isShared) return showToast('Este material só pode ser alterado pelo criador ou pelo ADM.', 'error');
   setValue('saved-material-id', material.id);
   setValue('saved-material-name', material.name);
   setValue('saved-material-supplier', material.supplier || '');
@@ -4475,6 +5183,8 @@ function editSavedMaterial(id) {
 async function submitSavedMaterial(event) {
   event.preventDefault();
   const id = document.getElementById('saved-material-id').value || uid('saved-mat');
+  const existing = savedMaterials.find((item) => item.id === id);
+  if (existing && (!canEditTeamRecord(existing) || existing._isShared)) return showToast('Este material só pode ser alterado pelo criador ou pelo ADM.', 'error');
   const selectedMode = document.getElementById('saved-material-calculation-mode').value;
   const calculationMode = ['area', 'sheet'].includes(selectedMode) ? selectedMode : 'roll';
   const selectedBasis = document.getElementById('saved-material-basis').value;
@@ -4490,6 +5200,8 @@ async function submitSavedMaterial(event) {
     volumePricing: normalizeVolumePricing(savedMaterialVolumeTiers),
     gapMm: positive(document.getElementById('saved-material-gap').value, 2),
     rotate: document.getElementById('saved-material-rotate').checked,
+    _ownerOperatorId: existing?._ownerOperatorId || (teamAccess.team_enabled ? teamOperator?.id || null : null),
+    _isShared: existing?._isShared === true,
   };
   if (calculationMode !== 'area' && !material.widthCm) {
     showToast(`Informe a largura da ${calculationMode === 'sheet' ? 'chapa' : 'bobina'}.`, 'error');
@@ -4531,6 +5243,7 @@ function useSavedMaterial(id) {
 
 async function deleteSavedMaterial(id) {
   const material = savedMaterials.find((item) => item.id === id);
+  if (material && (!canEditTeamRecord(material) || material._isShared)) return showToast('Este material só pode ser excluído pelo criador ou pelo ADM.', 'error');
   if (!material || !window.confirm(`Excluir o material “${material.name}”?`)) return;
   await storeDelete('materials', id);
   savedMaterials = savedMaterials.filter((item) => item.id !== id);
@@ -4611,6 +5324,17 @@ function registerWebMcpTools() {
 }
 
 function handleClick(event) {
+  const closeModal = event.target.closest('[data-close-modal]');
+  if (closeModal) {
+    const modal = document.getElementById(closeModal.dataset.closeModal);
+    if (modal) modal.hidden = true;
+    return;
+  }
+  if (event.target instanceof HTMLElement && event.target.classList.contains('modal-backdrop')
+    && ['team-task-modal', 'purchase-modal', 'team-quote-modal'].includes(event.target.id)) {
+    event.target.hidden = true;
+    return;
+  }
   const billingPlan = event.target.closest('[data-billing-plan]');
   if (billingPlan) {
     void startAsaasCheckout(billingPlan.dataset.billingPlan, billingPlan);
@@ -4661,6 +5385,13 @@ function handleClick(event) {
     if (action === 'delete-saved-material') deleteSavedMaterial(id);
     if (action === 'edit-catalog-item') editCatalogItem(id);
     if (action === 'delete-catalog-item') deleteCatalogItem(id);
+    if (action === 'view-team-quote') viewTeamQuote(id);
+    if (action === 'complete-team-task') void completeTeamTask(id);
+    if (action === 'edit-team-member') editTeamMember(id);
+    if (action === 'toggle-team-member') void toggleTeamMember(id, actionButton.dataset.active === 'true');
+    if (action === 'share-team-catalog') void setCatalogVisibility(actionButton.dataset.recordType, id, actionButton.dataset.shared === 'true');
+    if (action === 'record-catalog-purchase') recordCatalogPurchase(id);
+    if (action === 'delete-purchase') void deleteCatalogPurchase(id);
     return;
   }
   const id = event.target.closest('button')?.id;
@@ -4683,6 +5414,16 @@ function handleClick(event) {
   if (id === 'close-layout-modal') document.getElementById('layout-modal').hidden = true;
   if (id === 'find-stores-button') openMapSearch();
   if (id === 'account-button') openAccountModal();
+  if (id === 'admin-account-security-button') openAccountModal();
+  if (id === 'team-access-account-button') openAccountModal();
+  if (id === 'team-change-pin-button') void teamSignOut();
+  if (id === 'team-new-task-button') openTeamTaskForm();
+  if (id === 'finance-new-purchase') openPurchaseForm();
+  if (id === 'team-pin-account-switch') void signOutCloudAccount();
+  if (id === 'team-member-cancel') {
+    document.getElementById('team-member-form')?.reset();
+    setValue('team-member-id', '');
+  }
   if (id === 'profile-use-account-address') copyAccountAddressToQuote();
   if ((id === 'close-account-modal' || id === 'cancel-account-modal') && !document.body.classList.contains('auth-gate-active')) {
     document.getElementById('account-modal').hidden = true;
@@ -4754,6 +5495,10 @@ function handlePasswordVisibilityClick(event) {
 function handleInput(event) {
   const element = event.target;
   if (!(element.matches('input, select, textarea'))) return;
+  if (element.id === 'finance-month') {
+    if (event.type === 'input' || event.type === 'change') renderFinanceWorkspace();
+    return;
+  }
   if (element instanceof HTMLInputElement && element.hasAttribute('data-money-input') && element.dataset.moneyInputDispatch !== 'true' && event.type === 'input') {
     element.value = formatMoneyInputValue(element.value);
     element.setSelectionRange(element.value.length, element.value.length);
@@ -4861,6 +5606,11 @@ function initialize() {
   document.getElementById('password-recovery-form')?.addEventListener('submit', submitRecoveredPassword);
   document.getElementById('change-password-form')?.addEventListener('submit', submitPasswordChange);
   document.getElementById('account-profile-form')?.addEventListener('submit', submitAccountProfile);
+  document.getElementById('team-pin-form')?.addEventListener('submit', authenticateTeamPin);
+  document.getElementById('team-admin-setup-form')?.addEventListener('submit', initializeTeamAdminPin);
+  document.getElementById('team-task-form')?.addEventListener('submit', submitTeamTask);
+  document.getElementById('team-member-form')?.addEventListener('submit', saveTeamMember);
+  document.getElementById('purchase-form')?.addEventListener('submit', submitCatalogPurchase);
   document.getElementById('restore-input')?.addEventListener('change', (event) => importBackup(event.target.files?.[0]));
   document.getElementById('layout-modal')?.addEventListener('click', (event) => {
     if (event.target.id === 'layout-modal') event.currentTarget.hidden = true;
