@@ -54,7 +54,7 @@ export function nextMoneyInputValue(currentValue, {
     return formatCents(cents);
   }
 
-  if (inputType === 'deleteContentBackward' || inputType === 'deleteByCut') {
+  if (inputType === 'deleteContentBackward') {
     cents = replaceSelection ? 0 : Math.floor(cents / 10);
     return formatCents(cents);
   }

@@ -4688,6 +4688,14 @@ function handleInput(event) {
   handleFieldEvent(element);
 }
 
+function commitMoneyInputEdit(element, nextValue) {
+  element.value = nextValue;
+  element.setSelectionRange(nextValue.length, nextValue.length);
+  element.dataset.moneyInputDispatch = 'true';
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  delete element.dataset.moneyInputDispatch;
+}
+
 function handleMoneyBeforeInput(event) {
   const element = event.target;
   if (!(element instanceof HTMLInputElement) || !element.hasAttribute('data-money-input')) return;
@@ -4705,11 +4713,20 @@ function handleMoneyBeforeInput(event) {
   if (nextValue === null) return;
 
   event.preventDefault();
-  element.value = nextValue;
-  element.setSelectionRange(nextValue.length, nextValue.length);
-  element.dataset.moneyInputDispatch = 'true';
-  element.dispatchEvent(new Event('input', { bubbles: true }));
-  delete element.dataset.moneyInputDispatch;
+  commitMoneyInputEdit(element, nextValue);
+}
+
+function handleMoneyPaste(event) {
+  const element = event.target;
+  if (!(element instanceof HTMLInputElement) || !element.hasAttribute('data-money-input')) return;
+  const paste = event.clipboardData?.getData('text/plain') || '';
+  if (!paste) return;
+
+  event.preventDefault();
+  commitMoneyInputEdit(element, nextMoneyInputValue(element.value, {
+    inputType: 'insertFromPaste',
+    paste,
+  }));
 }
 
 function clearPresetTextOnFocus(event) {
@@ -4727,6 +4744,7 @@ function initialize() {
   document.addEventListener('click', handlePasswordVisibilityClick);
   document.addEventListener('focusin', clearPresetTextOnFocus);
   document.addEventListener('beforeinput', handleMoneyBeforeInput);
+  document.addEventListener('paste', handleMoneyPaste);
   document.addEventListener('input', handleInput);
   document.addEventListener('change', handleInput);
   document.getElementById('saved-material-form')?.addEventListener('submit', submitSavedMaterial);
