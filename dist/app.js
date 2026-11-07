@@ -3986,6 +3986,7 @@ function resetCurrentCalculation({ empty = false, message = 'Novo cálculo pront
   setCalculationBaseline(state);
   void persistDraftNow();
   switchView('calculator-view');
+  scheduleCloudSync();
   showToast(message);
 }
 
