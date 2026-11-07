@@ -1,6 +1,7 @@
 import { deriveOfflineEntitlement } from './offline-billing.js';
 import { conflictCopyId, hasMeaningfulDraft, shouldQueueLocalRecord, shouldSyncDraft } from './cloud-sync-policy.js';
 import { legacyOwnerFromStorage, localDatabaseNameForOwner, UNOWNED_LEGACY_OWNER_MARKER } from './local-account-storage.js';
+import { formatMoneyInputValue, nextMoneyInputValue } from './money-input.js';
 
 const APP_VERSION = '1.3.0';
 const DB_NAME = 'nesto-local-v1';
@@ -216,7 +217,9 @@ function clone(value) {
 }
 
 function num(value, fallback = 0) {
-  const parsed = Number(String(value ?? '').replace(',', '.'));
+  const raw = String(value ?? '').trim();
+  const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw;
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -2537,7 +2540,9 @@ function showToast(message, kind = 'success') {
 
 function setValue(id, value) {
   const element = document.getElementById(id);
-  if (element && document.activeElement !== element) element.value = value;
+  if (element && document.activeElement !== element) {
+    element.value = element.hasAttribute('data-money-input') ? formatMoneyInputValue(value) : value;
+  }
 }
 
 function setClearOnFocus(id, enabled) {
@@ -2608,7 +2613,7 @@ function renderVolumePricingEditor(material) {
         ${tiers.map((tier, tierIndex) => `
           <div class="volume-pricing-row">
             <label class="field"><span>A partir de <small>(${unit})</small></span><input data-material-id="${escapeHtml(material.id)}" data-material-field="tierMinQuantity" data-tier-index="${tierIndex}" type="number" min="0.01" step="0.01" value="${tier.minQuantity || ''}" placeholder="10" /></label>
-            <label class="field"><span>Preço unitário <small>(R$/${priceUnit})</small></span><input data-material-id="${escapeHtml(material.id)}" data-material-field="tierUnitPrice" data-tier-index="${tierIndex}" type="number" min="0" step="0.01" value="${tier.unitPrice || ''}" placeholder="0,00" /></label>
+            <label class="field"><span>Preço unitário <small>(R$/${priceUnit})</small></span><input data-money-input data-material-id="${escapeHtml(material.id)}" data-material-field="tierUnitPrice" data-tier-index="${tierIndex}" type="text" inputmode="decimal" value="${formatMoneyInputValue(tier.unitPrice)}" placeholder="0,00" /></label>
             <button class="row-remove" type="button" data-action="remove-material-tier" data-id="${escapeHtml(material.id)}" data-tier-index="${tierIndex}" aria-label="Remover faixa">×</button>
           </div>
         `).join('')}
@@ -2636,7 +2641,7 @@ function renderMaterialEditors() {
           <label class="field"><span>Descrição</span><input data-material-id="${escapeHtml(material.id)}" data-material-field="name" data-clear-on-focus="${material.nameIsDefault ? 'true' : 'false'}" type="text" value="${escapeHtml(material.name)}" /></label>
           <label class="field"><span>${isSheet ? 'Largura da chapa' : 'Largura'} <small>(cm)</small></span><input data-material-id="${escapeHtml(material.id)}" data-material-field="widthCm" data-clear-on-focus="${material.widthIsDefault ? 'true' : 'false'}" type="number" min="1" step="0.1" value="${isArea ? '' : material.widthCm || ''}" placeholder="${isArea ? 'Não necessária' : '320'}" ${isArea ? 'disabled' : ''} /></label>
           <label class="field" ${isSheet ? '' : 'hidden'}><span>Altura da chapa <small>(cm)</small></span><input data-material-id="${escapeHtml(material.id)}" data-material-field="heightCm" type="number" min="1" step="0.1" value="${material.heightCm || ''}" placeholder="244" ${isSheet ? '' : 'disabled'} /></label>
-          <label class="field"><span>Preço base <small>(${priceUnit})</small></span><input data-material-id="${escapeHtml(material.id)}" data-material-field="price" type="number" min="0" step="0.01" value="${material.price || ''}" /></label>
+          <label class="field"><span>Preço base <small>(${priceUnit})</small></span><input data-money-input data-material-id="${escapeHtml(material.id)}" data-material-field="price" type="text" inputmode="decimal" value="${formatMoneyInputValue(material.price)}" /></label>
           <label class="field"><span>Cobrança</span><select data-material-id="${escapeHtml(material.id)}" data-material-field="basis" ${isArea ? 'disabled' : ''}><option value="linear" ${material.basis === 'linear' ? 'selected' : ''} ${isSheet ? 'disabled' : ''}>Por metro linear</option><option value="m2" ${material.basis === 'm2' ? 'selected' : ''}>Por m²</option><option value="sheet" ${material.basis === 'sheet' ? 'selected' : ''} ${isSheet ? '' : 'disabled'}>Por chapa</option></select></label>
           <label class="field field-toggle"><span>Permitir giro das peças</span><button class="toggle-switch ${material.rotate ? 'on' : ''}" type="button" data-action="toggle-material-rotate" data-id="${escapeHtml(material.id)}" role="switch" aria-checked="${material.rotate}" ${isArea ? 'disabled' : ''}><span></span></button></label>
           <label class="field"><span>Material de laminação</span><select data-material-id="${escapeHtml(material.id)}" data-material-field="laminationMaterialId"><option value="" ${!material.laminationMaterialId ? 'selected' : ''}>Não será laminado</option>${state.materials.filter((candidate) => candidate.id !== material.id).map((candidate) => `<option value="${escapeHtml(candidate.id)}" ${candidate.id === material.laminationMaterialId ? 'selected' : ''}>${escapeHtml(candidate.name)}</option>`).join('')}</select></label>
@@ -2675,7 +2680,7 @@ function renderSupplies() {
       <label class="field"><span>Descrição</span><input data-supply-id="${escapeHtml(supply.id)}" data-supply-field="description" data-clear-on-focus="${supply.descriptionIsDefault ? 'true' : 'false'}" type="text" value="${escapeHtml(supply.description)}" /></label>
       <label class="field"><span>Qtd.</span><input data-supply-id="${escapeHtml(supply.id)}" data-supply-field="quantity" type="number" min="0" step="0.01" value="${supply.quantity}" /></label>
       <label class="field"><span>Un.</span><input data-supply-id="${escapeHtml(supply.id)}" data-supply-field="unit" data-clear-on-focus="${supply.unitIsDefault ? 'true' : 'false'}" type="text" value="${escapeHtml(supply.unit)}" /></label>
-      <label class="field"><span>Preço unitário</span><input data-supply-id="${escapeHtml(supply.id)}" data-supply-field="unitPrice" type="number" min="0" step="0.01" value="${supply.unitPrice || ''}" /></label>
+      <label class="field"><span>Preço unitário</span><input data-money-input data-supply-id="${escapeHtml(supply.id)}" data-supply-field="unitPrice" type="text" inputmode="decimal" value="${formatMoneyInputValue(supply.unitPrice)}" /></label>
       <button class="row-remove" type="button" data-action="remove-supply" data-id="${escapeHtml(supply.id)}" aria-label="Remover insumo">×</button>
     </div>
   `).join('');
@@ -2907,7 +2912,7 @@ function renderSavedMaterialVolumePricing() {
   container.innerHTML = savedMaterialVolumeTiers.map((tier, tierIndex) => `
     <div class="volume-pricing-row">
       <label class="field"><span>A partir de <small>(${unit})</small></span><input data-saved-tier-index="${tierIndex}" data-saved-tier-field="minQuantity" type="number" min="0.01" step="0.01" value="${tier.minQuantity || ''}" placeholder="10" /></label>
-      <label class="field"><span>Preço unitário <small>(R$/${unit === 'chapas' ? 'chapa' : unit})</small></span><input data-saved-tier-index="${tierIndex}" data-saved-tier-field="unitPrice" type="number" min="0" step="0.01" value="${tier.unitPrice || ''}" placeholder="0,00" /></label>
+      <label class="field"><span>Preço unitário <small>(R$/${unit === 'chapas' ? 'chapa' : unit})</small></span><input data-money-input data-saved-tier-index="${tierIndex}" data-saved-tier-field="unitPrice" type="text" inputmode="decimal" value="${formatMoneyInputValue(tier.unitPrice)}" placeholder="0,00" /></label>
       <button class="row-remove" type="button" data-action="remove-saved-material-tier" data-tier-index="${tierIndex}" aria-label="Remover faixa">×</button>
     </div>
   `).join('');
@@ -4646,6 +4651,10 @@ function handlePasswordVisibilityClick(event) {
 function handleInput(event) {
   const element = event.target;
   if (!(element.matches('input, select, textarea'))) return;
+  if (element instanceof HTMLInputElement && element.hasAttribute('data-money-input') && element.dataset.moneyInputDispatch !== 'true' && event.type === 'input') {
+    element.value = formatMoneyInputValue(element.value);
+    element.setSelectionRange(element.value.length, element.value.length);
+  }
   if (element.id === 'customer-search' && event.type === 'input') {
     renderCustomers();
     return;
@@ -4679,6 +4688,30 @@ function handleInput(event) {
   handleFieldEvent(element);
 }
 
+function handleMoneyBeforeInput(event) {
+  const element = event.target;
+  if (!(element instanceof HTMLInputElement) || !element.hasAttribute('data-money-input')) return;
+
+  const selectedAll = element.selectionStart === 0 && element.selectionEnd === element.value.length;
+  const paste = event.inputType === 'insertFromPaste'
+    ? event.dataTransfer?.getData('text/plain') || event.clipboardData?.getData('text/plain') || event.data || ''
+    : '';
+  const nextValue = nextMoneyInputValue(element.value, {
+    inputType: event.inputType,
+    data: event.data || '',
+    paste,
+    replaceSelection: selectedAll,
+  });
+  if (nextValue === null) return;
+
+  event.preventDefault();
+  element.value = nextValue;
+  element.setSelectionRange(nextValue.length, nextValue.length);
+  element.dataset.moneyInputDispatch = 'true';
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  delete element.dataset.moneyInputDispatch;
+}
+
 function clearPresetTextOnFocus(event) {
   const element = event.target;
   if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
@@ -4693,6 +4726,7 @@ function initialize() {
   document.addEventListener('click', handleClick);
   document.addEventListener('click', handlePasswordVisibilityClick);
   document.addEventListener('focusin', clearPresetTextOnFocus);
+  document.addEventListener('beforeinput', handleMoneyBeforeInput);
   document.addEventListener('input', handleInput);
   document.addEventListener('change', handleInput);
   document.getElementById('saved-material-form')?.addEventListener('submit', submitSavedMaterial);
