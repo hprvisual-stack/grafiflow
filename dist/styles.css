@@ -343,7 +343,7 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .client-form-grid { gap: 10px; }
 .client-quote-preview-wrap { min-width: 0; }
 .client-quote-preview { min-height: 540px; border: 1px solid #cfe0ea; border-radius: 10px; padding: 38px 42px; background: #fff; box-shadow: 0 12px 34px rgba(7, 45, 84, 0.08); }
-.client-quote-document { color: #0b3d6b; min-height: 460px; display: flex; flex-direction: column; }
+.client-quote-document { color: #0b3d6b; min-height: 0; display: flex; flex-direction: column; }
 .client-doc-header { display: flex; justify-content: space-between; align-items: start; gap: 24px; padding-bottom: 24px; border-bottom: 2px solid #0b3d6b; }
 .client-doc-brand { display: flex; align-items: center; gap: 10px; }
 .client-doc-brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: #072d54; background: #35bdc4; font-weight: 900; font-size: 1.14rem; }
@@ -361,7 +361,7 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .client-doc-item-name { font-weight: 750; }
 .client-doc-item-meta { color: #60778b; font-size: 0.68rem; margin-top: 3px; }
 .client-doc-item-qty { color: #60778b; white-space: nowrap; font-size: 0.7rem; }
-.client-doc-total { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-top: auto; padding: 20px 0 18px; border-bottom: 2px solid #0b3d6b; }
+.client-doc-total { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-top: 24px; padding: 20px 0 18px; border-bottom: 2px solid #0b3d6b; }
 .client-doc-total-label { color: #60778b; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .client-doc-total-value { color: #0361a1; font-size: 1.55rem; font-weight: 900; letter-spacing: -0.05em; }
 .client-doc-conditions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; padding-top: 17px; }
@@ -373,7 +373,7 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .client-quote-modal-actions [hidden] { display: none !important; }
 .client-quote-pdf-status { margin: 12px 0 0; color: var(--muted); font-size: 0.74rem; line-height: 1.45; }
 .client-quote-pdf-source { display: block; width: 794px; min-height: 1123px; margin: 0; padding: 45px; color: #0b3d6b; background: #fff; font-family: Arial, Helvetica, sans-serif; pointer-events: none; }
-.client-quote-pdf-source .client-quote-document { min-height: 1033px; }
+.client-quote-pdf-source .client-quote-document { min-height: 0; }
 .client-quote-pdf-source .client-doc-item, .client-quote-pdf-source .client-doc-total { break-inside: avoid; page-break-inside: avoid; }
 .mobile-pdf-button { display: none; }
 
