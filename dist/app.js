@@ -1,5 +1,5 @@
 import { deriveOfflineEntitlement } from './offline-billing.js';
-import { conflictCopyId, hasMeaningfulDraft, shouldQueueLocalRecord, shouldSyncDraft } from './cloud-sync-policy.js';
+import { conflictCopyId, hasMeaningfulDraft, shouldQueueLocalRecord } from './cloud-sync-policy.js';
 import { legacyOwnerFromStorage, localDatabaseNameForOwner, UNOWNED_LEGACY_OWNER_MARKER } from './local-account-storage.js';
 import { formatMoneyInputValue, nextMoneyInputValue } from './money-input.js';
 
@@ -143,6 +143,9 @@ let selectedCustomerId = '';
 let computed = emptyComputed();
 let dbPromise;
 let draftClearIntent = false;
+let calculationHasUnsavedChanges = false;
+let calculationBaseline = null;
+let pendingNewCalculationCustomer = null;
 let cloudSyncCompletion = Promise.resolve();
 let cloudSessionSetupPromise = Promise.resolve();
 let draftTimer;
@@ -166,9 +169,6 @@ let cloudSyncRunning = false;
 let cloudSyncRequested = false;
 let cloudSyncChannel = null;
 let cloudPollTimer = null;
-let cloudDraftDeferred = false;
-let cloudDraftFocusoutTimer = null;
-let cloudDeferredDraftRecord = null;
 let fullSyncRunning = false;
 let authMode = 'login';
 let authNotice = '';
@@ -365,12 +365,14 @@ async function storePut(storeName, value, { fromCloud = false } = {}) {
       _cloudDirty: true,
     };
   } else if (!fromCloud && storeName === 'settings' && value?.key === 'draft') {
-    const existing = await storeGet(storeName, value.key);
-    storedValue = { ...value, _cloudVersionAt: value._cloudVersionAt || existing?._cloudVersionAt || null, _cloudDirty: true };
+    storedValue = { ...value };
+    delete storedValue._cloudDirty;
   }
   const transaction = db.transaction(storeName, 'readwrite');
   await idbRequest(transaction.objectStore(storeName).put(storedValue));
-  if (!fromCloud) await queueCloudMutation(storeName, storedValue).catch((error) => console.warn('Não foi possível registrar a sincronização pendente.', error));
+  if (!fromCloud && !(storeName === 'settings' && value?.key === 'draft')) {
+    await queueCloudMutation(storeName, storedValue).catch((error) => console.warn('Não foi possível registrar a sincronização pendente.', error));
+  }
 }
 
 async function storeDelete(storeName, key, { fromCloud = false } = {}) {
@@ -443,6 +445,7 @@ function recordIdentity(storeName, value) {
 
 async function queueCloudMutation(storeName, value, { recordId = '', recordType = '', deleted = false, baseUpdatedAt = null } = {}) {
   if (!['settings', 'materials', 'quotes', 'customers'].includes(storeName)) return;
+  if (storeName === 'settings' && value?.key === 'draft') return;
   const inferredType = storeName === 'materials' ? 'material' : storeName === 'quotes' ? 'quote' : 'customer';
   const identity = value
     ? recordIdentity(storeName, value)
@@ -563,6 +566,7 @@ function copyAccountAddressToQuote() {
   setValue('profile-quote-address', address);
   state.clientQuote.businessAddress = address;
   setValue('client-business-address', address);
+  markCalculationChanged();
   renderClientQuotePreview();
   persistDraftSoon();
   showToast('Endereço copiado para o orçamento. Salve os dados da conta para reutilizá-lo nos próximos.');
@@ -1134,7 +1138,7 @@ async function usableCloudSession() {
 }
 
 function scheduleCloudSync() {
-  if (fullSyncRunning || !cloudSession || !cloudWorkspaceId || !navigator.onLine || !cloudConfigured()) return;
+  if (calculationHasUnsavedChanges || fullSyncRunning || !cloudSession || !cloudWorkspaceId || !navigator.onLine || !cloudConfigured()) return;
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => syncCloudNow().catch((error) => {
     console.warn('A sincronização será retomada quando houver conexão.', error);
@@ -1144,6 +1148,10 @@ function scheduleCloudSync() {
 
 async function synchronizeAllData() {
   if (fullSyncRunning) return;
+  if (calculationHasUnsavedChanges) {
+    showToast('Sincronização pausada durante o cálculo. Salve o orçamento ou inicie um novo cálculo para continuar.', 'error');
+    return;
+  }
   if (!cloudSession?.access_token) {
     openAccountModal();
     showToast('Entre na sua conta para sincronizar os dados entre o PWA e o SaaS web.', 'error');
@@ -1164,7 +1172,7 @@ async function synchronizeAllData() {
   try {
     clearTimeout(draftTimer);
     draftTimer = null;
-    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent });
+    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent, hasUnfinalizedChanges: calculationHasUnsavedChanges });
     if (!cloudWorkspaceId) await getWorkspaceMembership();
     await queueLocalDataForFirstSync();
     await syncCloudNow();
@@ -1185,7 +1193,7 @@ async function synchronizeAllData() {
 }
 
 function syncAfterWake() {
-  if (!cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
+  if (calculationHasUnsavedChanges || !cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
   if (!cloudWorkspaceId) {
     restoreCloudAccount();
     return;
@@ -1196,26 +1204,6 @@ function syncAfterWake() {
 function hasFocusedEditor() {
   const active = document.activeElement;
   return Boolean(active && active !== document.body && active.matches?.('input, textarea, select, [contenteditable="true"]'));
-}
-
-function scheduleDeferredDraftSync() {
-  if (!cloudDraftDeferred) return;
-  clearTimeout(cloudDraftFocusoutTimer);
-  cloudDraftFocusoutTimer = setTimeout(() => {
-    cloudDraftFocusoutTimer = null;
-    if (!cloudDraftDeferred || hasFocusedEditor()) return;
-    const deferredRecord = cloudDeferredDraftRecord;
-    cloudDeferredDraftRecord = null;
-    cloudDraftDeferred = false;
-    if (!deferredRecord) {
-      syncAfterWake();
-      return;
-    }
-    void applyCloudRecords([deferredRecord]).then((stillDeferred) => {
-      if (stillDeferred) cloudDeferredDraftRecord = deferredRecord;
-      else syncAfterWake();
-    }).catch((error) => updateAccountStatus(error.message || 'Não foi possível aplicar a versão remota do rascunho.'));
-  }, 450);
 }
 
 function initializeCrossTabSync() {
@@ -1234,7 +1222,6 @@ function initializeCrossTabSync() {
       if (isBillingEnabled()) void refreshWorkspaceEntitlement();
     }
   });
-  document.addEventListener('focusout', scheduleDeferredDraftSync);
   window.addEventListener('focus', () => {
     syncAfterWake();
     if (isBillingEnabled()) void refreshWorkspaceEntitlement();
@@ -1259,23 +1246,11 @@ async function queueLocalDataForFirstSync() {
   if (!cloudSession?.user?.id || cloudSession.user.id !== activeLocalDataOwner) {
     throw new Error('Os dados locais não correspondem à conta conectada. Entre novamente para sincronizar com segurança.');
   }
-  const [draft, materials, quotes, customers] = await Promise.all([
-    storeGet('settings', 'draft'), storeGetAll('materials'), storeGetAll('quotes'), storeGetAll('customers'),
+  const [materials, quotes, customers] = await Promise.all([
+    storeGetAll('materials'), storeGetAll('quotes'), storeGetAll('customers'),
   ]);
   const queuedDraft = await storeGet('syncQueue', 'draft:draft');
-  const queueIsNewer = queuedDraft && (!draft || (new Date(queuedDraft.updatedAt).getTime() > new Date(draft.updatedAt || 0).getTime()));
-  const draftForSync = queueIsNewer ? queuedDraft.payload : draft;
-  if (shouldSyncDraft(draftForSync)) {
-    if (queueIsNewer) {
-      // Keep the newer queued edit intact.
-    } else if (shouldQueueLocalRecord(draftForSync)) {
-      await queueCloudMutation('settings', draftForSync);
-    } else if (queuedDraft) {
-      await deleteQueuedMutation(queuedDraft.id);
-    }
-  } else if (queuedDraft) {
-    await deleteQueuedMutation(queuedDraft.id);
-  }
+  if (queuedDraft) await deleteQueuedMutation(queuedDraft.id);
   for (const [storeName, records] of [['materials', materials], ['quotes', quotes], ['customers', customers]]) {
     for (const record of records) {
       const identity = recordIdentity(storeName, record);
@@ -1290,7 +1265,6 @@ async function localRecordTimestamp(recordType, recordId) {
   const queued = await storeGet('syncQueue', `${recordType}:${recordId}`);
   if (queued) return Number.MAX_SAFE_INTEGER;
   let value;
-  if (recordType === 'draft') value = await storeGet('settings', 'draft');
   if (recordType === 'material' || catalogCategoryFromRecordType(recordType)) value = await storeGet('materials', recordId);
   if (recordType === 'quote') value = await storeGet('quotes', recordId);
   if (recordType === 'customer') value = await storeGet('customers', recordId);
@@ -1301,7 +1275,6 @@ async function localRecordTimestamp(recordType, recordId) {
       if (typedRecordType && await storeGet('syncQueue', `${typedRecordType}:${recordId}`)) return Number.MAX_SAFE_INTEGER;
     }
   }
-  if (recordType === 'draft' && !shouldSyncDraft(value)) return 0;
   const cloudTime = value?._cloudVersionAt || '';
   return new Date(cloudTime || 0).getTime() || 0;
 }
@@ -1347,25 +1320,9 @@ function cloudSyncPayloadsEqual(recordType, left, right) {
 
 async function preserveRejectedCloudMutation(item) {
   if (!item?.payload) return false;
-  if (item.recordType === 'draft' && !hasMeaningfulDraft(item.payload)) return false;
+  if (item.recordType === 'draft') return false;
   const now = new Date().toISOString();
   const id = conflictCopyId(item);
-  if (item.recordType === 'draft' && item.payload.value) {
-    if (await storeGet('quotes', id)) return true;
-    const snapshot = clone(item.payload.value);
-    const name = `Cópia de conflito — rascunho ${new Date().toLocaleString('pt-BR')}`;
-    snapshot.quoteId = id;
-    snapshot.quoteName = name;
-    const quote = {
-      id, name, snapshot, updatedAt: now, isConflictCopy: true,
-      piecesCount: (snapshot.pieces || []).reduce((sum, piece) => sum + Math.max(0, Math.floor(positive(piece.quantity, 1))), 0),
-      materialsCount: (snapshot.materials || []).length,
-    };
-    await storePut('quotes', quote);
-    savedQuotes = [quote, ...savedQuotes].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-    renderQuotes();
-    return true;
-  }
   if (item.recordType === 'quote') {
     if (await storeGet('quotes', id)) return true;
     const quote = {
@@ -1413,20 +1370,20 @@ async function preserveRejectedCloudMutation(item) {
 }
 
 async function applyCloudRecords(records) {
-  let draftChanged = false;
-  let draftDeferred = false;
+  if (calculationHasUnsavedChanges) return true;
   let materialsChanged = false;
   let catalogChanged = false;
   let quotesChanged = false;
   let customersChanged = false;
   for (const record of records || []) {
+    if (record.record_type === 'draft') continue;
+    if (calculationHasUnsavedChanges) return true;
     const cloudTime = new Date(record.updated_at || 0).getTime() || 0;
     if (await localRecordTimestamp(record.record_type, record.record_id) > cloudTime) continue;
     const isCatalogType = Boolean(catalogCategoryFromRecordType(record.record_type));
-    const storeName = record.record_type === 'draft' ? 'settings'
-      : (record.record_type === 'material' || isCatalogType) ? 'materials'
-        : record.record_type === 'customer' ? 'customers' : 'quotes';
-    const localId = record.record_type === 'draft' ? 'draft' : record.record_id;
+    const storeName = (record.record_type === 'material' || isCatalogType) ? 'materials'
+      : record.record_type === 'customer' ? 'customers' : 'quotes';
+    const localId = record.record_id;
     const local = await storeGet(storeName, localId);
     const catalogCategory = catalogCategoryForRecord(record) || local?.catalogCategory || '';
     const isLegacyCatalogType = record.record_type === 'material' && (String(record.record_id).startsWith('catalog:') || Boolean(catalogCategory));
@@ -1434,18 +1391,7 @@ async function applyCloudRecords(records) {
     if (record.is_deleted) {
       if (record.record_type === 'material' && cloudIncrementalSyncAvailable && local?.catalogCategory) continue;
       if (!local) continue;
-      if (record.record_type === 'draft' && (draftTimer || hasFocusedEditor())) {
-        draftDeferred = true;
-        cloudDraftDeferred = true;
-        cloudDeferredDraftRecord = record;
-        continue;
-      }
       await storeDelete(storeName, localId, { fromCloud: true });
-      if (record.record_type === 'draft') {
-        cloudDraftDeferred = false;
-        cloudDeferredDraftRecord = null;
-        draftChanged = true;
-      }
       if (record.record_type === 'material') {
         savedMaterials = savedMaterials.filter((item) => item.id !== record.record_id);
         materialsChanged = true;
@@ -1472,21 +1418,7 @@ async function applyCloudRecords(records) {
       }
       continue;
     }
-    if (record.record_type === 'draft') {
-      if (!payload?.value) continue;
-      if (draftTimer || hasFocusedEditor()) {
-        draftDeferred = true;
-        cloudDraftDeferred = true;
-        cloudDeferredDraftRecord = record;
-        continue;
-      }
-      await storePut('settings', { key: 'draft', value: payload.value, updatedAt: record.updated_at, clearIntent: payload.clearIntent === true, _cloudVersionAt: record.updated_at, _cloudDirty: false }, { fromCloud: true });
-      draftClearIntent = payload.clearIntent === true;
-      cloudDraftDeferred = false;
-      cloudDeferredDraftRecord = null;
-      hydrateState(payload.value);
-      draftChanged = true;
-    } else if (isCatalogItem && (payload?.catalogCategory || catalogCategory)) {
+    if (isCatalogItem && (payload?.catalogCategory || catalogCategory)) {
       const category = payload?.catalogCategory || catalogCategory;
       const item = { ...payload, catalogCategory: category, id: record.record_id, _syncUpdatedAt: record.updated_at, _cloudVersionAt: record.updated_at, _cloudDirty: false };
       await storePut('materials', item, { fromCloud: true });
@@ -1512,26 +1444,20 @@ async function applyCloudRecords(records) {
       customersChanged = true;
     }
   }
-  if (draftChanged) {
-    if (!state.pieces.length) state.pieces.push(defaultPiece(state.materials[0]?.id));
-    renderAll({ persistDraft: false });
-  } else {
-    if (materialsChanged) {
-      renderSavedMaterials();
-      if (!document.getElementById('material-picker-modal')?.hidden) renderMaterialPicker();
-    }
-    if (catalogChanged) renderCatalogItems();
-    if (quotesChanged) {
-      renderQuotes();
-      renderCustomers();
-    }
-    if (customersChanged) {
-      renderCustomers();
-      renderCustomerSelect();
-    }
+  if (materialsChanged) {
+    renderSavedMaterials();
+    if (!document.getElementById('material-picker-modal')?.hidden) renderMaterialPicker();
   }
-  if (draftChanged && catalogChanged) renderCatalogItems();
-  return draftDeferred;
+  if (catalogChanged) renderCatalogItems();
+  if (quotesChanged) {
+    renderQuotes();
+    renderCustomers();
+  }
+  if (customersChanged) {
+    renderCustomers();
+    renderCustomerSelect();
+  }
+  return false;
 }
 
 async function cloudSyncCursor() {
@@ -1611,7 +1537,7 @@ async function downloadFullCloudSnapshot(session) {
     if (page.length < 500) break;
     offset += page.length;
   }
-  await applyCloudRecords(records);
+  return !(await applyCloudRecords(records));
 }
 
 async function downloadIncrementalCloudChanges(session) {
@@ -1624,14 +1550,15 @@ async function downloadIncrementalCloudChanges(session) {
     });
     if (!Array.isArray(page)) throw new Error('O Supabase não retornou uma página válida de alterações.');
     if (!page.length) break;
-    const draftDeferred = await applyCloudRecords(page);
-    if (draftDeferred) return;
+    const syncDeferred = await applyCloudRecords(page);
+    if (syncDeferred) return false;
     const nextCursor = page.reduce((maximum, record) => Math.max(maximum, Number(record.change_seq) || 0), cursor);
     if (nextCursor <= cursor) throw new Error('A sincronização incremental recebeu um cursor inválido; nenhuma alteração foi descartada.');
     cursor = nextCursor;
     await saveCloudSyncCursor(cursor);
     if (page.length < 500) break;
   }
+  return true;
 }
 
 async function waitForCloudSyncToFinish() {
@@ -1640,6 +1567,10 @@ async function waitForCloudSyncToFinish() {
 
 async function syncCloudNow() {
   if (localOwnerSwitching || !cloudSession || cloudSession.user?.id !== activeLocalDataOwner || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
+  if (calculationHasUnsavedChanges) {
+    updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+    return;
+  }
   if (!cloudWorkspaceId) {
     restoreCloudAccount();
     return;
@@ -1655,12 +1586,20 @@ async function syncCloudNow() {
   updateAccountStatus('Sincronizando…');
   try {
     const session = await usableCloudSession();
+    if (calculationHasUnsavedChanges) {
+      updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+      return;
+    }
     const supportsTypedCatalog = await detectIncrementalSyncSupport(session);
+    if (calculationHasUnsavedChanges) {
+      updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+      return;
+    }
     await normalizeLegacyCatalogQueue();
     const queuedItems = await storeGetAll('syncQueue');
     const queue = [];
     for (const item of queuedItems) {
-      if (item.recordType === 'draft' && !shouldSyncDraft(item.payload)) {
+      if (item.recordType === 'draft') {
         await deleteQueuedMutation(item.id);
       } else {
         queue.push(item);
@@ -1678,6 +1617,10 @@ async function syncCloudNow() {
     const conflictedDeletes = [];
     const confirmedRows = [];
     for (let index = 0; index < changes.length; index += 100) {
+      if (calculationHasUnsavedChanges) {
+        updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+        return;
+      }
       const batch = queue.slice(index, index + 100);
       const syncedRows = await cloudFetch('/rest/v1/rpc/sync_grafiflow_records', {
         method: 'POST', token: session.access_token,
@@ -1712,9 +1655,17 @@ async function syncCloudNow() {
       if (!completedQueueIds.has(item.id)) continue;
       if (await preserveRejectedCloudMutation(item)) preservedConflicts += 1;
     }
-    if (confirmedRows.length) await applyCloudRecords(confirmedRows);
-    if (supportsTypedCatalog) await downloadIncrementalCloudChanges(session);
-    else await downloadFullCloudSnapshot(session);
+    if (confirmedRows.length && await applyCloudRecords(confirmedRows)) {
+      updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+      return;
+    }
+    const downloaded = supportsTypedCatalog
+      ? await downloadIncrementalCloudChanges(session)
+      : await downloadFullCloudSnapshot(session);
+    if (downloaded === false || calculationHasUnsavedChanges) {
+      updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+      return;
+    }
     if (preservedConflicts) {
       showToast(`${preservedConflicts} versão(ões) local(is) conflitante(s) foi(foram) guardada(s) como cópia. Confira o histórico e o catálogo.`, 'error');
     }
@@ -1732,7 +1683,7 @@ async function syncCloudNow() {
     const pending = await storeGetAll('syncQueue').catch(() => []);
     const requested = cloudSyncRequested;
     cloudSyncRequested = false;
-    if (syncSucceeded) updateAccountStatus('Sincronizado');
+    if (syncSucceeded && !calculationHasUnsavedChanges) updateAccountStatus('Sincronizado');
     if (syncSucceeded && (pending.length || requested)) scheduleCloudSync();
     finishSync?.();
   }
@@ -1837,23 +1788,23 @@ function updateAccountStatus(message = '') {
   const signedIn = Boolean(cloudSession?.user?.email || cloudSession?.user?.id);
   const authGateActive = document.body.classList.contains('auth-gate-active') || document.body.classList.contains('auth-pending');
   const manualSync = document.getElementById('manual-sync-button');
-  if (manualSync) manualSync.disabled = !configured || !navigator.onLine || cloudSyncRunning || fullSyncRunning;
+  if (manualSync) manualSync.disabled = !configured || !navigator.onLine || calculationHasUnsavedChanges || cloudSyncRunning || fullSyncRunning;
   if (button) {
     button.textContent = signedIn ? 'Minha conta' : 'Entrar e sincronizar';
     button.title = signedIn ? (cloudSession.user.email || cloudWorkspaceName || 'Conta MetriFlow') : 'Entre para sincronizar seus dados entre dispositivos';
   }
   if (status) {
-    status.textContent = message || authNotice || (signedIn
+    status.textContent = message || (signedIn && calculationHasUnsavedChanges ? 'Rascunho local — sincronização pausada até salvar ou descartar o cálculo.' : authNotice || (signedIn
       ? (cloudSyncRunning ? 'Sincronizando dados…' : !navigator.onLine ? 'Sem internet. Seus dados continuam salvos neste dispositivo.' : cloudWorkspaceName ? `Conectado a ${cloudWorkspaceName}.` : 'Conta conectada; aguardando sincronização.')
       : authGateActive ? (configured ? 'Entre para continuar no seu espaço.' : 'A conexão com a conta não está configurada.')
-        : configured ? 'Entre ou crie uma conta para manter seus dados sincronizados entre dispositivos.' : 'A conta em nuvem será ativada quando a conexão com o Supabase estiver configurada. O modo offline segue funcionando.');
+        : configured ? 'Entre ou crie uma conta para manter seus dados sincronizados entre dispositivos.' : 'A conta em nuvem será ativada quando a conexão com o Supabase estiver configurada. O modo offline segue funcionando.'));
   }
   const signOut = document.getElementById('auth-signout');
   if (signOut) signOut.hidden = !signedIn;
   const syncNow = document.getElementById('auth-sync-now');
   if (syncNow) {
     syncNow.hidden = !signedIn;
-    syncNow.disabled = !navigator.onLine || cloudSyncRunning || fullSyncRunning || !cloudWorkspaceId;
+    syncNow.disabled = !navigator.onLine || calculationHasUnsavedChanges || cloudSyncRunning || fullSyncRunning || !cloudWorkspaceId;
   }
   const submit = document.getElementById('auth-submit');
   if (submit) submit.disabled = signedIn || !configured;
@@ -2323,6 +2274,17 @@ async function loadPersistence() {
     if (quotes.length) savedQuotes = quotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     savedCustomers = customers.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     selectedCustomerId = savedCustomers[0]?.id || '';
+    if (typeof draft?.hasUnfinalizedChanges === 'boolean') {
+      calculationHasUnsavedChanges = draft.hasUnfinalizedChanges;
+      calculationBaseline = calculationHasUnsavedChanges ? savedQuoteSnapshotFor(state) : clone(state);
+    } else if (currentStateMatchesSavedQuote(state)) {
+      calculationHasUnsavedChanges = false;
+      setCalculationBaseline(state);
+    } else {
+      calculationHasUnsavedChanges = Boolean(draft?.value && hasMeaningfulDraft(draft));
+      calculationBaseline = calculationHasUnsavedChanges ? null : clone(state);
+    }
+    updateAccountStatus(calculationHasUnsavedChanges ? 'Rascunho local — sincronização pausada até salvar ou descartar o cálculo.' : '');
     for (const quote of savedQuotes) {
       const customerId = inferLegacyCustomerId(quote);
       if (customerId && !quote.customerId) {
@@ -2362,8 +2324,8 @@ function resetRuntimeForLocalOwner() {
   billingEntitlement = null;
   billingHistory = [];
   draftClearIntent = false;
-  cloudDraftDeferred = false;
-  cloudDeferredDraftRecord = null;
+  calculationHasUnsavedChanges = false;
+  calculationBaseline = null;
   if (billingRefreshTimer) clearInterval(billingRefreshTimer);
   if (billingDeadlineTimer) clearInterval(billingDeadlineTimer);
   if (billingCountdownTimer) clearInterval(billingCountdownTimer);
@@ -2397,7 +2359,7 @@ async function switchLocalDataOwner(ownerId) {
       draftTimer = null;
       const currentCloudOwner = cloudSession?.user?.id || '';
       if (activeLocalDataOwner && (!currentCloudOwner || currentCloudOwner === activeLocalDataOwner)) {
-        await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent });
+        await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent, hasUnfinalizedChanges: calculationHasUnsavedChanges });
         clearTimeout(cloudSyncTimer);
         cloudSyncTimer = null;
       }
@@ -2515,17 +2477,71 @@ function normalizeSupply(supply) {
   };
 }
 
-function persistDraftSoon({ clearIntent = false } = {}) {
+function calculationStateSignature(value) {
+  const snapshot = clone(value || {});
+  delete snapshot.appVersion;
+  return JSON.stringify(stableCloudValue(snapshot));
+}
+
+function savedQuoteSnapshotFor(value = state) {
+  const quote = savedQuotes.find((item) => item.id === value?.quoteId);
+  if (!quote?.snapshot) return null;
+  const snapshot = clone(quote.snapshot);
+  snapshot.quoteId = quote.id;
+  snapshot.quoteName = quote.name;
+  return snapshot;
+}
+
+function currentStateMatchesSavedQuote(value = state) {
+  const snapshot = savedQuoteSnapshotFor(value);
+  if (!snapshot) return false;
+  const current = clone(value);
+  current.quoteId = value.quoteId;
+  current.quoteName = savedQuotes.find((item) => item.id === value.quoteId)?.name || value.quoteName;
+  return calculationStateSignature(current) === calculationStateSignature(snapshot);
+}
+
+function setCalculationBaseline(value = state) {
+  calculationBaseline = clone(value);
+}
+
+function markCalculationChanged() {
+  const wasUnsaved = calculationHasUnsavedChanges;
+  if (calculationBaseline) {
+    calculationHasUnsavedChanges = calculationStateSignature(state) !== calculationStateSignature(calculationBaseline);
+  } else {
+    calculationHasUnsavedChanges = true;
+  }
+  if (!wasUnsaved && calculationHasUnsavedChanges) {
+    clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = null;
+    updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+  } else if (wasUnsaved && !calculationHasUnsavedChanges) {
+    updateAccountStatus();
+    scheduleCloudSync();
+  }
+}
+
+async function persistDraftNow() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  try {
+    await storePut('settings', {
+      key: 'draft',
+      value: clone(state),
+      updatedAt: new Date().toISOString(),
+      clearIntent: draftClearIntent,
+      hasUnfinalizedChanges: calculationHasUnsavedChanges,
+    });
+  } catch (error) {
+    console.warn('Falha ao guardar rascunho local.', error);
+  }
+}
+
+function persistDraftSoon({ clearIntent = draftClearIntent } = {}) {
   draftClearIntent = clearIntent;
   clearTimeout(draftTimer);
-  draftTimer = setTimeout(async () => {
-    draftTimer = null;
-    try {
-      await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: draftClearIntent });
-    } catch (error) {
-      console.warn('Falha ao guardar rascunho local.', error);
-    }
-  }, 320);
+  draftTimer = setTimeout(() => { void persistDraftNow(); }, 320);
 }
 
 function showToast(message, kind = 'success') {
@@ -2822,6 +2838,7 @@ function applyCustomerToQuoteDraft(customer, { persist = true } = {}) {
     state.clientQuote.clientDocument = customer.document || '';
     state.clientQuote.clientAddress = customer.address || '';
   }
+  markCalculationChanged();
   renderCustomerSelect();
   renderClientQuoteForm();
   renderClientQuotePreview();
@@ -2871,7 +2888,10 @@ async function deleteCustomer(id) {
     await storeDelete('customers', id);
     savedCustomers = savedCustomers.filter((entry) => entry.id !== id);
     if (selectedCustomerId === id) selectedCustomerId = savedCustomers[0]?.id || '';
-    if (state.clientQuote.customerId === id) state.clientQuote.customerId = '';
+    if (state.clientQuote.customerId === id) {
+      state.clientQuote.customerId = '';
+      markCalculationChanged();
+    }
     renderCustomers();
     renderCustomerSelect();
     persistDraftSoon();
@@ -3959,10 +3979,56 @@ function resetCurrentCalculation({ empty = false, message = 'Novo cálculo pront
   state.salePrice = 0;
   state.otherCosts = 0;
   state.targetMargin = 35;
+  draftClearIntent = true;
+  calculationHasUnsavedChanges = false;
+  updateAccountStatus();
   renderAll({ persistDraft: false });
-  persistDraftSoon({ clearIntent: true });
+  setCalculationBaseline(state);
+  void persistDraftNow();
   switchView('calculator-view');
   showToast(message);
+}
+
+function closeNewCalculationDialog() {
+  const dialog = document.getElementById('new-calculation-modal');
+  if (dialog) dialog.hidden = true;
+  pendingNewCalculationCustomer = null;
+  document.getElementById('new-quote-button')?.focus({ preventScroll: true });
+}
+
+function continueWithNewCalculation(customer = null) {
+  resetCurrentCalculation({ message: 'Novo cálculo pronto.' });
+  if (customer) applyCustomerToQuoteDraft(customer);
+  pendingNewCalculationCustomer = null;
+  const dialog = document.getElementById('new-calculation-modal');
+  if (dialog) dialog.hidden = true;
+}
+
+function requestNewCalculation({ customer = null } = {}) {
+  if (!calculationHasUnsavedChanges && !hasMeaningfulDraft(state)) {
+    continueWithNewCalculation(customer);
+    return;
+  }
+  pendingNewCalculationCustomer = customer;
+  const title = document.getElementById('new-calculation-modal-title');
+  const description = document.getElementById('new-calculation-modal-description');
+  if (title) title.textContent = state.quoteId ? 'Começar outro cálculo?' : 'O que fazer com este orçamento?';
+  if (description) {
+    description.textContent = state.quoteId
+      ? `“${state.quoteName || 'Orçamento atual'}” já está no histórico. Você pode salvar as alterações antes de continuar ou descartá-las. O orçamento já salvo não será apagado.`
+      : 'Este cálculo ainda está em edição. Salve-o no histórico ou descarte o rascunho para começar outro. A ação não apaga outros orçamentos salvos.';
+  }
+  const dialog = document.getElementById('new-calculation-modal');
+  if (dialog) {
+    dialog.hidden = false;
+    document.getElementById('new-calculation-save')?.focus({ preventScroll: true });
+  }
+}
+
+async function saveAndContinueWithNewCalculation() {
+  const saved = await saveQuote();
+  if (!saved) return;
+  continueWithNewCalculation(pendingNewCalculationCustomer);
 }
 
 function clearCurrentQuote() {
@@ -3987,6 +4053,7 @@ function addMaterial() {
     laminationMaterialId: null,
   };
   state.materials.push(material);
+  markCalculationChanged();
   renderMaterialEditors();
   renderPieces();
   calculateAndRender();
@@ -3997,6 +4064,7 @@ function addMaterialTier(id) {
   if (!material) return;
   if (!Array.isArray(material.volumePricing)) material.volumePricing = [];
   material.volumePricing.push({ minQuantity: 0, unitPrice: 0 });
+  markCalculationChanged();
   renderMaterialEditors();
   calculateAndRender();
   const card = [...document.querySelectorAll('[data-material-card]')].find((element) => element.dataset.materialCard === id);
@@ -4008,12 +4076,14 @@ function removeMaterialTier(id, tierIndex) {
   const material = state.materials.find((item) => item.id === id);
   if (!material || !Array.isArray(material.volumePricing)) return;
   material.volumePricing.splice(Number(tierIndex), 1);
+  markCalculationChanged();
   renderMaterialEditors();
   calculateAndRender();
 }
 
 function addPiece() {
   state.pieces.push(defaultPiece(state.materials[0]?.id));
+  markCalculationChanged();
   renderPieces();
   calculateAndRender();
   const rows = document.querySelectorAll('[data-piece-card]');
@@ -4022,6 +4092,7 @@ function addPiece() {
 
 function addSupply() {
   state.installation.supplies.push({ id: uid('supply'), description: 'Novo insumo', descriptionIsDefault: true, quantity: 1, unit: 'un', unitIsDefault: true, unitPrice: 0 });
+  markCalculationChanged();
   renderSupplies();
   calculateAndRender();
   const rows = document.querySelectorAll('.supply-row');
@@ -4030,12 +4101,14 @@ function addSupply() {
 
 function removePiece(id) {
   state.pieces = state.pieces.filter((piece) => piece.id !== id);
+  markCalculationChanged();
   renderPieces();
   calculateAndRender();
 }
 
 function removeSupply(id) {
   state.installation.supplies = state.installation.supplies.filter((supply) => supply.id !== id);
+  markCalculationChanged();
   renderSupplies();
   calculateAndRender();
 }
@@ -4046,6 +4119,7 @@ function removeMaterial(id) {
   state.materials = state.materials.filter((material) => material.id !== id);
   state.pieces = state.pieces.map((piece) => piece.materialId === id ? { ...piece, materialId: fallback.id } : piece);
   state.materials = state.materials.map((material) => material.laminationMaterialId === id ? { ...material, laminationMaterialId: null } : material);
+  markCalculationChanged();
   renderMaterialEditors();
   renderPieces();
   calculateAndRender();
@@ -4140,6 +4214,7 @@ function handleFieldEvent(element, { recalculate = true } = {}) {
     state.clientQuote[field] = element.value;
     if (field === 'validity') state.clientQuote.validityIsDefault = false;
     if (field === 'paymentTerms') state.clientQuote.paymentTermsIsDefault = false;
+    markCalculationChanged();
     renderClientQuotePreview();
     persistDraftSoon();
     return;
@@ -4151,6 +4226,7 @@ function handleFieldEvent(element, { recalculate = true } = {}) {
   else if (element.dataset.pieceId) updatePieceFromElement(element);
   else if (element.dataset.supplyId) updateSupplyFromElement(element);
   else updateDirectField(element);
+  markCalculationChanged();
   if (recalculate) calculateAndRender();
 }
 
@@ -4173,18 +4249,26 @@ function toggleInstallationPanel() {
 async function saveQuote() {
   if (computed.blockingErrors.length) {
     showToast(computed.blockingErrors[0], 'error');
-    return;
+    return false;
   }
   const name = state.quoteName.trim() || `Orçamento ${new Date().toLocaleDateString('pt-BR')}`;
   const id = state.quoteId || uid('quote');
   const existingQuote = savedQuotes.find((item) => item.id === id);
   const snapshot = clone(state);
+  snapshot.quoteId = id;
+  snapshot.quoteName = name;
   snapshot.materials = snapshot.materials.map((material) => ({ ...material, widthIsDefault: false }));
+  const existingSnapshot = existingQuote?.snapshot ? clone(existingQuote.snapshot) : null;
+  if (existingSnapshot) {
+    existingSnapshot.quoteId = id;
+    existingSnapshot.quoteName = name;
+    existingSnapshot.materials = (existingSnapshot.materials || []).map((material) => ({ ...material, widthIsDefault: false }));
+  }
   const sameApprovedQuote = existingQuote?.status === 'approved'
     && existingQuote.customerId === (state.clientQuote.customerId || null)
     && num(existingQuote.salePrice) === computed.salePrice
     && num(existingQuote.totalCost) === computed.totalCost
-    && JSON.stringify(stableCloudValue(existingQuote.snapshot)) === JSON.stringify(stableCloudValue(snapshot));
+    && JSON.stringify(stableCloudValue(existingSnapshot)) === JSON.stringify(stableCloudValue(snapshot));
   const quote = {
     id,
     name,
@@ -4205,13 +4289,20 @@ async function saveQuote() {
     state.quoteId = id;
     state.quoteName = name;
     state.materials = state.materials.map((material) => ({ ...material, widthIsDefault: false }));
-    persistDraftSoon();
+    draftClearIntent = false;
+    calculationHasUnsavedChanges = false;
+    setCalculationBaseline(state);
+    await persistDraftNow();
+    updateAccountStatus();
+    scheduleCloudSync();
     setValue('quote-name', name);
     showToast('Orçamento salvo neste dispositivo.');
     renderQuotes();
+    return true;
   } catch (error) {
     console.error(error);
     showToast('Não foi possível salvar o orçamento.', 'error');
+    return false;
   }
 }
 
@@ -4221,6 +4312,10 @@ function loadQuote(id) {
   hydrateState(quote.snapshot);
   state.quoteId = quote.id;
   state.quoteName = quote.name;
+  calculationHasUnsavedChanges = false;
+  draftClearIntent = false;
+  setCalculationBaseline(state);
+  updateAccountStatus();
   renderAll();
   switchView('calculator-view');
   showToast('Orçamento aberto.');
@@ -4276,7 +4371,9 @@ async function importBackup(file) {
     if (Array.isArray(parsed.quotes)) savedQuotes = parsed.quotes;
     if (Array.isArray(parsed.customers)) savedCustomers = parsed.customers;
     draftClearIntent = false;
-    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: false });
+    calculationHasUnsavedChanges = Boolean(parsed.draft && !currentStateMatchesSavedQuote(state) && hasMeaningfulDraft(state));
+    calculationBaseline = calculationHasUnsavedChanges ? savedQuoteSnapshotFor(state) : clone(state);
+    await storePut('settings', { key: 'draft', value: clone(state), updatedAt: new Date().toISOString(), clearIntent: false, hasUnfinalizedChanges: calculationHasUnsavedChanges });
     for (const material of savedMaterials) await storePut('materials', material);
     for (const item of savedCatalogItems) await storePut('materials', item);
     for (const quote of savedQuotes) await storePut('quotes', quote);
@@ -4424,6 +4521,7 @@ function useSavedMaterial(id) {
   if (currentMaterial) state.materials[0] = material;
   else state.materials = [material];
   if (!state.pieces.length) state.pieces.push(defaultPiece(material.id));
+  markCalculationChanged();
   closeMaterialPicker();
   renderAll();
   switchView('calculator-view');
@@ -4537,6 +4635,7 @@ function handleClick(event) {
       const material = state.materials.find((item) => item.id === id);
       if (material) {
         material.rotate = !material.rotate;
+        markCalculationChanged();
         toggleButton(actionButton, material.rotate);
         calculateAndRender();
       }
@@ -4553,9 +4652,7 @@ function handleClick(event) {
     if (action === 'start-customer-quote') {
       const customer = savedCustomers.find((entry) => entry.id === id);
       if (customer) {
-        resetCurrentCalculation();
-        applyCustomerToQuoteDraft(customer);
-        switchView('calculator-view');
+        requestNewCalculation({ customer });
       }
     }
     if (action === 'use-saved-material') useSavedMaterial(id);
@@ -4568,7 +4665,10 @@ function handleClick(event) {
   const id = event.target.closest('button')?.id;
   if (id === 'billing-start-trial-button') void startGrafiflowTrial();
   if (id === 'billing-open-account-button') openBillingAccount();
-  if (id === 'new-quote-button' || id === 'quotes-new-button') resetCurrentCalculation();
+  if (id === 'new-quote-button' || id === 'quotes-new-button') requestNewCalculation();
+  if (id === 'new-calculation-save') void saveAndContinueWithNewCalculation();
+  if (id === 'new-calculation-discard') continueWithNewCalculation(pendingNewCalculationCustomer);
+  if (id === 'new-calculation-cancel' || id === 'new-calculation-close') closeNewCalculationDialog();
   if (id === 'clear-quote-button') clearCurrentQuote();
   if (id === 'save-quote-button') saveQuote();
   if (id === 'print-button') openClientQuoteModal();
@@ -4626,11 +4726,13 @@ function handleClick(event) {
   if (id === 'customer-cancel-button' || id === 'customer-cancel-button-form') resetCustomerForm();
   if (id === 'optimize-button') {
     state.optimize = !state.optimize;
+    markCalculationChanged();
     toggleButton(event.target.closest('#optimize-button'), state.optimize);
     calculateAndRender();
   }
   if (id === 'auto-installation-button') {
     state.installation.autoQuantity = !state.installation.autoQuantity;
+    markCalculationChanged();
     toggleButton(event.target.closest('#auto-installation-button'), state.installation.autoQuantity);
     calculateAndRender();
   }
@@ -4665,6 +4767,7 @@ function handleInput(event) {
     if (customer) applyCustomerToQuoteDraft(customer);
     else {
       state.clientQuote.customerId = '';
+      markCalculationChanged();
       renderCustomerSelect();
       persistDraftSoon();
     }
@@ -4766,6 +4869,18 @@ function initialize() {
   });
   document.getElementById('client-quote-modal')?.addEventListener('click', (event) => {
     if (event.target.id === 'client-quote-modal') closeClientQuoteModal();
+  });
+  document.getElementById('new-calculation-modal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'new-calculation-modal') closeNewCalculationDialog();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !document.getElementById('new-calculation-modal')?.hidden) closeNewCalculationDialog();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && calculationHasUnsavedChanges) void persistDraftNow();
+  });
+  window.addEventListener('pagehide', () => {
+    if (calculationHasUnsavedChanges) void persistDraftNow();
   });
   document.getElementById('account-modal')?.addEventListener('click', (event) => {
     if (event.target.id === 'account-modal' && !document.body.classList.contains('auth-gate-active')) {

@@ -388,6 +388,20 @@
         <button id="billing-open-account-button" class="text-button billing-open-account" type="button">Abrir Minha Assinatura</button>
       </section>
     </div>
+    <div class="modal-backdrop new-calculation-modal" id="new-calculation-modal" hidden>
+      <div class="modal-card new-calculation-modal-card" role="dialog" aria-modal="true" aria-labelledby="new-calculation-modal-title" aria-describedby="new-calculation-modal-description">
+        <div class="modal-heading">
+          <div><span class="section-kicker">ORÇAMENTO EM EDIÇÃO</span><h2 id="new-calculation-modal-title">O que fazer com este orçamento?</h2></div>
+          <button class="icon-button" id="new-calculation-close" type="button" aria-label="Continuar editando">×</button>
+        </div>
+        <p class="muted-copy" id="new-calculation-modal-description">Este cálculo ainda está em edição. Salve-o no histórico ou descarte o rascunho para começar outro. A ação não apaga outros orçamentos salvos.</p>
+        <div class="new-calculation-actions">
+          <button class="primary-button" id="new-calculation-save" type="button">Salvar e iniciar novo cálculo</button>
+          <button class="secondary-button" id="new-calculation-discard" type="button">Descartar rascunho e iniciar</button>
+          <button class="text-button" id="new-calculation-cancel" type="button">Continuar editando</button>
+        </div>
+      </div>
+    </div>
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div class="modal-backdrop" id="material-picker-modal" hidden><div class="modal-card material-picker-modal-card" role="dialog" aria-modal="true" aria-labelledby="material-picker-title"><div class="modal-heading"><div><span class="section-kicker">CATÁLOGO LOCAL</span><h2 id="material-picker-title">Puxar produto do catálogo</h2><p class="muted-copy">O material escolhido substituirá o material principal. Para incluir outra mídia, use “+ Novo material”.</p></div><button class="icon-button" id="close-material-picker" type="button" aria-label="Fechar">×</button></div><div id="material-picker-list" class="material-picker-list"></div></div></div>
     <div class="modal-backdrop" id="layout-modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="layout-modal-title"><div class="modal-heading"><div><span class="section-kicker">VISUALIZAÇÃO AMPLIADA</span><h2 id="layout-modal-title">Mapa de corte</h2></div><button class="icon-button" id="close-layout-modal" type="button" aria-label="Fechar">×</button></div><div id="modal-layout-canvas" class="modal-layout-canvas"></div></div></div>
@@ -409,6 +423,6 @@
       </div>
     </div>
     <script src="./api/config?v=20261103-metriflow-rebrand"></script>
-    <script type="module" src="./app.js?v=20261106-money-input-v2"></script>
+    <script type="module" src="./app.js?v=20261106-draft-sync-v1"></script>
   </body>
 </html>
