@@ -173,6 +173,10 @@ let dbPromise;
 let draftClearIntent = false;
 let calculationHasUnsavedChanges = false;
 let calculationBaseline = null;
+let clientQuotePdfBlob = null;
+let clientQuotePdfFilename = '';
+let clientQuotePdfPreparing = false;
+let clientQuotePdfLoadPromise = null;
 let pendingNewCalculationCustomer = null;
 let cloudSyncCompletion = Promise.resolve();
 let cloudSessionSetupPromise = Promise.resolve();
@@ -4361,78 +4365,194 @@ function openClientQuoteModal() {
   renderClientQuotePreview();
   const modal = document.getElementById('client-quote-modal');
   if (modal) modal.hidden = false;
+  updateClientQuotePdfActions();
+  if (!clientQuoteNeedsSave() && !clientQuotePdfBlob) void prepareClientQuotePdf({ announce: false });
 }
 
 function closeClientQuoteModal() {
-  document.body.classList.remove('client-quote-printing');
-  document.documentElement.classList.remove('client-quote-printing');
   const modal = document.getElementById('client-quote-modal');
   if (modal) modal.hidden = true;
 }
 
-function printClientQuote() {
+function clientQuoteHasSavedVersion() {
+  return Boolean(state.quoteId && savedQuotes.some((quote) => quote.id === state.quoteId));
+}
+
+function clientQuoteNeedsSave() {
+  return calculationHasUnsavedChanges || !clientQuoteHasSavedVersion();
+}
+
+function clientQuoteCanShareFile() {
+  if (!clientQuotePdfBlob || typeof File === 'undefined' || typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false;
+  try {
+    return navigator.canShare({ files: [new File([clientQuotePdfBlob], clientQuotePdfFilename || 'metriflow-orcamento.pdf', { type: 'application/pdf' })] });
+  } catch {
+    return false;
+  }
+}
+
+function updateClientQuotePdfActions() {
+  const saveButton = document.getElementById('client-quote-save-and-prepare');
+  const shareButton = document.getElementById('client-quote-share');
+  const downloadButton = document.getElementById('client-quote-download');
+  const status = document.getElementById('client-quote-pdf-status');
+  const needsSave = clientQuoteNeedsSave();
+  const ready = Boolean(clientQuotePdfBlob) && !clientQuotePdfPreparing && !needsSave;
+  if (saveButton) {
+    saveButton.hidden = !needsSave;
+    saveButton.disabled = clientQuotePdfPreparing;
+    saveButton.textContent = clientQuoteHasSavedVersion() ? 'Salvar alterações e preparar PDF' : 'Salvar e preparar PDF';
+  }
+  if (shareButton) {
+    shareButton.hidden = !ready || !clientQuoteCanShareFile();
+    shareButton.disabled = clientQuotePdfPreparing;
+  }
+  if (downloadButton) {
+    downloadButton.hidden = !ready;
+    downloadButton.disabled = clientQuotePdfPreparing;
+  }
+  if (!status) return;
+  status.textContent = clientQuotePdfPreparing
+    ? 'Preparando o PDF neste dispositivo…'
+    : needsSave
+      ? 'Salve o orçamento para preparar o PDF. Ele só será sincronizado depois de salvo.'
+      : ready
+        ? (clientQuoteCanShareFile() ? 'PDF pronto. Compartilhe ou baixe para enviar ao cliente.' : 'PDF pronto. Baixe o arquivo para enviar ao cliente.')
+        : 'A prévia será convertida em PDF neste dispositivo.';
+}
+
+function invalidateClientQuotePdf() {
+  clientQuotePdfBlob = null;
+  clientQuotePdfFilename = '';
+  updateClientQuotePdfActions();
+}
+
+function loadClientQuotePdfLibrary() {
+  if (typeof window.html2pdf === 'function') return Promise.resolve();
+  if (clientQuotePdfLoadPromise) return clientQuotePdfLoadPromise;
+  clientQuotePdfLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.id = 'client-quote-pdf-library';
+    script.src = new URL('./vendor/html2pdf.bundle.min.js?v=0.14.0', import.meta.url).href;
+    script.async = true;
+    script.onload = () => typeof window.html2pdf === 'function' ? resolve() : reject(new Error('A biblioteca de PDF não iniciou.'));
+    script.onerror = () => reject(new Error('Não foi possível carregar a biblioteca de PDF.'));
+    document.head.append(script);
+  }).catch((error) => {
+    document.getElementById('client-quote-pdf-library')?.remove();
+    clientQuotePdfLoadPromise = null;
+    throw error;
+  });
+  return clientQuotePdfLoadPromise;
+}
+
+function buildClientQuotePdfFilename() {
+  const source = state.quoteName.trim() || state.clientQuote?.clientName?.trim() || 'orcamento';
+  const safeName = source.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'orcamento';
+  return `metriflow-orcamento-${safeName}.pdf`;
+}
+
+async function prepareClientQuotePdf({ announce = true } = {}) {
+  if (clientQuotePdfPreparing) return false;
+  if (clientQuoteNeedsSave()) {
+    updateClientQuotePdfActions();
+    return false;
+  }
   if (computed.blockingErrors.length) {
     showToast(computed.blockingErrors[0], 'error');
+    return false;
+  }
+  clientQuotePdfPreparing = true;
+  updateClientQuotePdfActions();
+  let source = null;
+  try {
+    await loadClientQuotePdfLibrary();
+    renderClientQuotePreview();
+    const preview = document.querySelector('#client-quote-preview .client-quote-document');
+    if (!preview) throw new Error('A prévia do orçamento não está disponível.');
+    const sourceSignature = calculationStateSignature(state);
+    source = document.createElement('div');
+    source.className = 'client-quote-pdf-source';
+    source.id = 'client-quote-pdf-source';
+    source.setAttribute('aria-hidden', 'true');
+    source.append(preview.cloneNode(true));
+    document.body.append(source);
+    if (document.fonts?.ready) await document.fonts.ready;
+    const filename = buildClientQuotePdfFilename();
+    const blob = await window.html2pdf().set({
+      margin: 0,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: {
+        scale: 1.5,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        windowWidth: 794,
+        onclone: (clonedDocument) => {
+          const clonedSource = clonedDocument.getElementById('client-quote-pdf-source');
+          if (clonedSource) clonedSource.style.visibility = 'visible';
+        },
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['.client-doc-item', '.client-doc-total'] },
+    }).from(source).outputPdf('blob');
+    if (!(blob instanceof Blob) || blob.size < 1000) throw new Error('O arquivo PDF gerado está vazio.');
+    if (sourceSignature !== calculationStateSignature(state) || clientQuoteNeedsSave()) return false;
+    clientQuotePdfBlob = blob;
+    clientQuotePdfFilename = filename;
+    if (announce) showToast('PDF pronto para compartilhar ou baixar.');
+    return true;
+  } catch (error) {
+    console.error('Falha ao preparar PDF do cliente.', error);
+    showToast('Não foi possível preparar o PDF. Tente novamente.', 'error');
+    return false;
+  } finally {
+    source?.remove();
+    clientQuotePdfPreparing = false;
+    updateClientQuotePdfActions();
+  }
+}
+
+async function saveAndPrepareClientQuotePdf() {
+  if (clientQuotePdfPreparing) return;
+  const button = document.getElementById('client-quote-save-and-prepare');
+  if (button) button.disabled = true;
+  try {
+    const saved = await saveQuote();
+    if (!saved) return;
+    invalidateClientQuotePdf();
+    await prepareClientQuotePdf();
+  } finally {
+    updateClientQuotePdfActions();
+  }
+}
+
+function downloadClientQuotePdf() {
+  if (!clientQuotePdfBlob || clientQuoteNeedsSave()) return;
+  const url = URL.createObjectURL(clientQuotePdfBlob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = clientQuotePdfFilename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  showToast('PDF baixado neste dispositivo.');
+}
+
+function shareClientQuotePdf() {
+  if (!clientQuotePdfBlob || clientQuoteNeedsSave()) return;
+  if (!clientQuoteCanShareFile()) {
+    downloadClientQuotePdf();
     return;
   }
-  renderClientQuotePreview();
-  const preview = document.querySelector('#client-quote-preview .client-quote-document');
-  if (!preview) {
-    showToast('Não foi possível preparar o orçamento para impressão.', 'error');
-    return;
-  }
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    showToast('O navegador bloqueou a janela de impressão. Permita pop-ups e tente novamente.', 'error');
-    return;
-  }
-  const printStyles = `
-    @page { size: A4; margin: 12mm; }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    body { color: #0b3d6b; font-family: Arial, Helvetica, sans-serif; }
-    .client-quote-document { min-height: 240mm; display: flex; flex-direction: column; border-top: 8px solid #0a97e0; }
-    .client-doc-header { display: flex; justify-content: space-between; align-items: start; gap: 24px; padding: 20px; color: #fff; background: #072d54; border-radius: 0 0 12px 12px; }
-    .client-doc-brand { display: flex; align-items: center; gap: 10px; }
-    .client-doc-brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: #072d54; background: #35bdc4; font-weight: 900; font-size: 18px; }
-    .client-doc-business { color: #fff; font-weight: 850; font-size: 15px; }
-    .client-doc-contact { color: #b7d3df; font-size: 11px; line-height: 1.5; margin-top: 3px; }
-    .client-doc-type { color: #35bdc4; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-align: right; }
-    .client-doc-number { color: #fff; font-size: 12px; font-weight: 750; text-align: right; margin-top: 6px; }
-    .client-doc-intro { margin: 25px 0 21px; padding: 14px 16px; background: #ecf5f9; border-left: 5px solid #35bdc4; border-radius: 0 10px 10px 0; }
-    .client-doc-intro h3 { font-size: 17px; margin: 0 0 6px; }
-    .client-doc-intro p { color: #60778b; font-size: 12px; line-height: 1.5; margin: 0; }
-    .client-doc-section-label { color: #0361a1; font-size: 10px; font-weight: 850; letter-spacing: .11em; text-transform: uppercase; margin-bottom: 9px; }
-    .client-doc-items { display: grid; gap: 0; border-top: 1px solid #d8e7f0; }
-    .client-doc-item { display: flex; justify-content: space-between; gap: 12px; padding: 12px 10px; border-bottom: 1px solid #d8e7f0; font-size: 12px; break-inside: avoid; }
-    .client-doc-item:nth-child(even) { background: #f8fbfd; }
-    .client-doc-item-name { font-weight: 750; }
-    .client-doc-item-meta { color: #60778b; font-size: 11px; margin-top: 3px; }
-    .client-doc-item-qty { color: #60778b; white-space: nowrap; font-size: 11px; }
-    .client-doc-total { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-top: auto; padding: 18px 20px; color: #fff; background: #072d54; border-radius: 12px; }
-    .client-doc-total-label { color: #b7d3df; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-    .client-doc-total-value { color: #35bdc4; font-size: 25px; font-weight: 900; letter-spacing: -.05em; }
-    .client-doc-conditions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; padding-top: 17px; }
-    .client-doc-conditions > div { padding: 11px 12px; border: 1px solid #d8e7f0; border-top: 3px solid #0a97e0; border-radius: 8px; background: #f4f9fc; }
-    .client-doc-condition-label { color: #60778b; display: block; font-size: 10px; font-weight: 800; margin-bottom: 3px; }
-    .client-doc-condition-value { color: #0b3d6b; display: block; font-size: 11px; line-height: 1.4; }
-    .client-doc-notes { color: #60778b; font-size: 11px; line-height: 1.5; white-space: pre-wrap; margin: 18px 0 0; padding: 11px 12px; border-left: 4px solid #35bdc4; border-radius: 0 8px 8px 0; background: #edfbfa; }
-    .client-doc-footer { color: #8aa5b5; font-size: 10px; margin-top: 28px; }
-    @media (max-width: 650px) {
-      .client-doc-header { display: block; }
-      .client-doc-type, .client-doc-number { text-align: left; margin-top: 12px; }
-      .client-doc-conditions { grid-template-columns: 1fr; gap: 9px; }
+  const file = new File([clientQuotePdfBlob], clientQuotePdfFilename, { type: 'application/pdf' });
+  navigator.share({ files: [file], title: 'Orçamento MetriFlow' }).then(() => {
+    showToast('Orçamento compartilhado.');
+  }).catch((error) => {
+    if (error?.name !== 'AbortError') {
+      console.error('Falha ao compartilhar PDF.', error);
+      downloadClientQuotePdf();
     }
-  `;
-  printWindow.document.open();
-  printWindow.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Orçamento para o cliente</title><style>${printStyles}</style></head><body>${preview.outerHTML}</body></html>`);
-  printWindow.document.close();
-  const startPrint = () => setTimeout(() => {
-    printWindow.focus();
-    printWindow.print();
-  }, 160);
-  if (printWindow.document.readyState === 'complete') startPrint();
-  else printWindow.addEventListener('load', startPrint, { once: true });
+  });
 }
 
 function renderLayoutSvg(result, compact = false, layoutOverride = null, fixedHeight = null) {
@@ -5320,8 +5440,10 @@ function handleFieldEvent(element, { recalculate = true } = {}) {
     if (field === 'validity') state.clientQuote.validityIsDefault = false;
     if (field === 'paymentTerms') state.clientQuote.paymentTermsIsDefault = false;
     markCalculationChanged();
+    invalidateClientQuotePdf();
     renderClientQuotePreview();
     persistDraftSoon();
+    if (!clientQuoteNeedsSave() && !document.getElementById('client-quote-modal')?.hidden) void prepareClientQuotePdf({ announce: false });
     return;
   }
   if (element.dataset.materialId) {
@@ -5818,8 +5940,10 @@ function handleClick(event) {
   if (id === 'new-calculation-cancel' || id === 'new-calculation-close') closeNewCalculationDialog();
   if (id === 'clear-quote-button') clearCurrentQuote();
   if (id === 'save-quote-button') saveQuote();
-  if (id === 'print-button') openClientQuoteModal();
-  if (id === 'client-quote-print') printClientQuote();
+  if (id === 'print-button' || id === 'mobile-pdf-button') openClientQuoteModal();
+  if (id === 'client-quote-save-and-prepare') void saveAndPrepareClientQuotePdf();
+  if (id === 'client-quote-share') shareClientQuotePdf();
+  if (id === 'client-quote-download') downloadClientQuotePdf();
   if (id === 'close-client-quote-modal' || id === 'cancel-client-quote') closeClientQuoteModal();
   if (id === 'add-material-button') addMaterial();
   if (id === 'add-piece-button') addPiece();
@@ -6075,10 +6199,6 @@ function initialize() {
         if (gate) gate.hidden = false;
       }
     }
-  });
-  window.addEventListener('afterprint', () => {
-    document.body.classList.remove('client-quote-printing');
-    document.documentElement.classList.remove('client-quote-printing');
   });
   window.addEventListener('online', updateConnectionStatus);
   window.addEventListener('offline', updateConnectionStatus);

@@ -370,6 +370,12 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .client-doc-notes { color: #60778b; font-size: 0.7rem; line-height: 1.5; white-space: pre-wrap; margin: 18px 0 0; }
 .client-doc-footer { color: #8aa5b5; font-size: 0.61rem; margin-top: 28px; }
 .client-quote-modal-actions { display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 18px; }
+.client-quote-modal-actions [hidden] { display: none !important; }
+.client-quote-pdf-status { margin: 12px 0 0; color: var(--muted); font-size: 0.74rem; line-height: 1.45; }
+.client-quote-pdf-source { display: block; width: 794px; min-height: 1123px; margin: 0; padding: 45px; color: #0b3d6b; background: #fff; font-family: Arial, Helvetica, sans-serif; pointer-events: none; }
+.client-quote-pdf-source .client-quote-document { min-height: 1033px; }
+.client-quote-pdf-source .client-doc-item, .client-quote-pdf-source .client-doc-total { break-inside: avoid; page-break-inside: avoid; }
+.mobile-pdf-button { display: none; }
 
 @media (max-width: 1180px) {
   .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
@@ -458,6 +464,23 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
   .formula-row strong { display: block; text-align: left; margin-top: 4px; }
   .toast-region { right: 12px; left: 12px; bottom: 12px; }
   .toast { max-width: none; }
+  #client-quote-modal { display: grid; align-items: stretch; padding: 0; }
+  #client-quote-modal[hidden] { display: none !important; }
+  .client-quote-modal-card { display: flex; width: 100%; height: 100dvh; max-height: 100dvh; flex-direction: column; gap: 10px; overflow: hidden; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) 13px 0; }
+  .client-quote-modal-heading { flex: 0 0 auto; margin-bottom: 0; }
+  .client-quote-modal-heading h2 { font-size: 1.3rem; }
+  .client-quote-modal-heading .muted-copy { margin-top: 5px; font-size: 0.72rem; }
+  .client-quote-workspace { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 1px 12px; }
+  .client-quote-editor { gap: 11px; }
+  .client-form-section { padding: 12px; }
+  .client-form-grid { grid-template-columns: 1fr; }
+  .client-form-grid .field.full-width { grid-column: auto; }
+  .client-quote-preview { min-height: 0; padding: 20px 16px; }
+  .client-quote-modal-actions { flex: 0 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: 0; padding: 10px 0 max(10px, env(safe-area-inset-bottom)); background: var(--paper); }
+  .client-quote-modal-actions button { min-height: 46px; }
+  #cancel-client-quote { grid-column: 1 / -1; grid-row: 2; }
+  #client-quote-save-and-prepare:not([hidden]) { grid-column: 1 / -1; }
+  .client-quote-pdf-status { flex: 0 0 auto; margin: 0; font-size: 0.7rem; }
 }
 
 @media print {
@@ -470,17 +493,6 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
   .panel { box-shadow: none; break-inside: avoid; }
   .results-column { break-inside: avoid; }
 
-  html.client-quote-printing body > *:not(#client-quote-modal) { display: none !important; }
-  html.client-quote-printing #client-quote-modal,
-  html.client-quote-printing #client-quote-modal[hidden] { display: block !important; position: static; inset: auto; padding: 0; background: #fff; }
-  html.client-quote-printing #client-quote-modal .client-quote-modal-card { width: 100%; max-height: none; overflow: visible; padding: 0; border-radius: 0; box-shadow: none; background: #fff; }
-  html.client-quote-printing #client-quote-modal .client-quote-modal-heading,
-  html.client-quote-printing #client-quote-modal .client-quote-editor,
-  html.client-quote-printing #client-quote-modal .client-quote-modal-actions { display: none !important; }
-  html.client-quote-printing #client-quote-modal .client-quote-workspace { display: block; }
-  html.client-quote-printing #client-quote-modal .client-quote-preview-wrap { display: block; }
-  html.client-quote-printing #client-quote-modal .client-quote-preview { min-height: 0; border: 0; border-radius: 0; padding: 5mm; box-shadow: none; }
-  html.client-quote-printing #client-quote-modal .client-quote-document { min-height: 0; }
 }
 
 .account-button { white-space: nowrap; }
@@ -629,7 +641,9 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
   .panel-heading { flex-wrap: wrap; }
   .topbar-actions .account-button { display: inline-flex; padding: 8px 9px; font-size: 0.67rem; }
   .topbar-actions #manual-sync-button { display: inline-flex; padding: 8px 9px; font-size: 0.67rem; }
-  .topbar-actions #print-button { display: inline-flex; padding: 8px 9px; font-size: 0.67rem; }
+  .topbar-actions #print-button { display: none; }
+  .mobile-pdf-button { position: fixed; z-index: 18; left: calc(72px + 10px + env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom)); display: flex; min-height: 50px; justify-content: center; align-items: center; padding: 12px; border-radius: 12px; box-shadow: 0 12px 28px rgba(3, 75, 125, 0.28); font-size: 0.82rem; }
+  #calculator-view { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
   .billing-gate-card { padding: 23px 18px; border-radius: 17px; }
   .billing-plan-options { grid-template-columns: minmax(0, 1fr); }
   .billing-plan-card p { min-height: 0; }

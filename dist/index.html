@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#072d54" />
     <meta name="description" content="Cálculo offline de aproveitamento de bobinas e chapas, custos, instalação e lucratividade." />
-    <link rel="manifest" href="./manifest.webmanifest?v=20261122-metriflux-brand" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20261122-metriflux-plan-pricing" />
     <link rel="icon" href="./metriflux-favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="./metriflux-icon-192.png" />
-    <link rel="stylesheet" href="./styles.css?v=20261122-metriflux-brand" />
+    <link rel="stylesheet" href="./styles.css?v=20261122-metriflux-plan-pricing" />
     <title>Metriflux — orçamento gráfico</title>
   </head>
   <body class="auth-pending">
@@ -497,10 +497,11 @@
           </section>
           <section class="client-quote-preview-wrap" aria-label="Prévia do documento"><div id="client-quote-preview" class="client-quote-preview"></div></section>
         </div>
-        <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="primary-button" id="client-quote-print" type="button">Imprimir / salvar PDF</button></div>
+        <p class="client-quote-pdf-status" id="client-quote-pdf-status" role="status" aria-live="polite"></p>
+        <div class="client-quote-modal-actions"><button class="secondary-button" id="cancel-client-quote" type="button">Voltar</button><button class="secondary-button" id="client-quote-download" type="button" hidden>Baixar PDF</button><button class="primary-button" id="client-quote-share" type="button" hidden>Compartilhar PDF</button><button class="primary-button" id="client-quote-save-and-prepare" type="button" hidden>Salvar e preparar PDF</button></div>
       </div>
     </div>
-    <script src="./api/config?v=20261122-metriflux-brand"></script>
-    <script type="module" src="./app.js?v=20261122-metriflux-brand"></script>
+    <script src="./api/config?v=20261122-metriflux-plan-pricing"></script>
+    <script type="module" src="./app.js?v=20261122-metriflux-plan-pricing"></script>
   </body>
 </html>
