@@ -1191,8 +1191,9 @@ function scheduleCloudSync() {
   if (calculationHasUnsavedChanges || fullSyncRunning || !cloudSession || !cloudWorkspaceId || !navigator.onLine || !cloudConfigured()) return;
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => syncCloudNow().catch((error) => {
-    console.warn('A sincronização será retomada quando houver conexão.', error);
-    updateAccountStatus('Sincronização pendente. Tentaremos novamente automaticamente.');
+    console.warn('Falha na sincronização automática.', error);
+    updateAccountStatus(error?.message || 'Falha na sincronização. Abra Minha conta para conferir o status.');
+    showToast('A sincronização falhou. Abra Minha conta para ver o motivo.', 'error');
   }), 900);
 }
 
