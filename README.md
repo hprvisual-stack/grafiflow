@@ -42,7 +42,7 @@ Os dados locais do site antigo pertencem à origem antiga do navegador. Exporte 
 
 ## Cobrança e planos comerciais
 
-O Metriflux está em beta gratuito: em produção, `GRAFIFLOW_BILLING_ENABLED=false` e o checkout está desligado. Enquanto essa flag permanecer falsa, não há trial cronometrado nem cobrança pelo app; o uso não deve ser anunciado como venda ou como assinatura ativa.
+O Metriflux está em beta gratuito: em produção, `GRAFIFLOW_BILLING_ENABLED=false` e o checkout está desligado. Enquanto essa flag permanecer falsa, não há trial cronometrado nem cobrança pelo app; o uso não deve ser anunciado como venda ou como assinatura ativa. Para liberar sincronização gratuita a todos os workspaces durante o beta, o banco também precisa estar com `private.grafiflow_billing_settings.enforcement_enabled=false`; use o script `supabase/diagnostics/free_beta_disable_billing_enforcement.sql` no SQL Editor e confirme o resultado. Isso não desativa as políticas RLS de isolamento dos dados.
 
 Tabela comercial definida para uma etapa futura, ainda não habilitada no produto:
 
