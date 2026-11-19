@@ -11,6 +11,7 @@ const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
 const LEGACY_LOCAL_OWNER_KEY = 'metriflow.local.legacy-owner.v2';
 const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v1';
+const SYNC_CURSOR_REPLAY_WINDOW = 100;
 const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
 const TEAM_SESSION_KEY = 'metriflow.team.session.v1';
 const MAX_ROLL_LENGTH_MM = 50000;
@@ -1219,7 +1220,11 @@ async function synchronizeAllData() {
 }
 
 function syncAfterWake() {
-  if (calculationHasUnsavedChanges || !cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
+  if (calculationHasUnsavedChanges) {
+    updateAccountStatus('Rascunho local — sincronização pausada até salvar ou descartar o cálculo.');
+    return;
+  }
+  if (!cloudSession || !navigator.onLine || !cloudConfigured() || cloudSessionSetupRunning) return;
   if (!cloudWorkspaceId) {
     restoreCloudAccount();
     return;
@@ -1863,7 +1868,10 @@ async function downloadFullCloudSnapshot(session) {
 }
 
 async function downloadIncrementalCloudChanges(session) {
-  let cursor = await cloudSyncCursor();
+  // Sequence values are allocated before a transaction commits. If another device
+  // commits a later sequence first, a client can otherwise advance past a row that
+  // commits afterward. Replay a small window; applying the same cloud row is idempotent.
+  let cursor = Math.max(0, (await cloudSyncCursor()) - SYNC_CURSOR_REPLAY_WINDOW);
   while (true) {
     const page = await cloudFetch('/rest/v1/rpc/list_grafiflow_records', {
       method: 'POST',
@@ -5706,7 +5714,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261104-empty-draft-guard').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-sync-cursor-replay').catch(() => undefined);
 }
 
 initialize();
