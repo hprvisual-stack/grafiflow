@@ -10,7 +10,7 @@ const CLOUD_SESSION_KEY = 'grafiflow.auth.v1';
 const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
 const LEGACY_LOCAL_OWNER_KEY = 'metriflow.local.legacy-owner.v2';
-const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v2';
+const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v3';
 const SYNC_CURSOR_REPLAY_WINDOW = 100;
 const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
 const TEAM_SESSION_KEY = 'metriflow.team.session.v1';
@@ -1203,6 +1203,11 @@ async function synchronizeAllData() {
     if (!cloudWorkspaceId) await getWorkspaceMembership();
     await queueLocalDataForFirstSync();
     await syncCloudNow();
+    if (calculationHasUnsavedChanges) throw new Error('Sincronização pausada: salve ou descarte o cálculo antes de continuar.');
+    updateAccountStatus('Conferindo todos os registros da nuvem…');
+    const session = await usableCloudSession();
+    const snapshotApplied = await downloadFullCloudSnapshot(session);
+    if (!snapshotApplied) throw new Error('Sincronização pausada: salve ou descarte o cálculo antes de continuar.');
     showToast('Sincronização concluída. As alterações locais e remotas foram comparadas e atualizadas.');
   } catch (error) {
     console.error('Falha ao sincronizar todos os dados.', error);
@@ -1864,7 +1869,9 @@ async function downloadFullCloudSnapshot(session) {
     cursor = nextCursor;
     if (page.length < 500) break;
   }
-  return !(await applyCloudRecords(records));
+  if (await applyCloudRecords(records)) return false;
+  await saveCloudSyncCursor(Math.max(await cloudSyncCursor(), cursor));
+  return true;
 }
 
 async function downloadIncrementalCloudChanges(session) {
@@ -5714,7 +5721,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-metriflux-beta').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-sync-full-rescan').catch(() => undefined);
 }
 
 initialize();

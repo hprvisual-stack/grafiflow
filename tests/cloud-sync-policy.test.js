@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { conflictCopyId, hasMeaningfulDraft, shouldQueueLocalRecord, shouldSyncDraft } from '../dist/cloud-sync-policy.js';
+
+const appSource = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');
 
 const blankDraft = (suffix = 'default') => ({
   quoteId: null,
@@ -74,4 +77,14 @@ test('conteúdo preenchido ou limpeza explícita do rascunho pode ser sincroniza
   editedDraft.pieces[0].widthCm = 80;
   assert.equal(shouldSyncDraft({ value: editedDraft }), true);
   assert.equal(shouldSyncDraft({ value: blankDraft(), clearIntent: true }), true);
+});
+
+test('a sincronização completa relê o snapshot remoto e renova o cursor', () => {
+  assert.match(appSource, /const SYNC_CURSOR_KEY = 'grafiflow\.sync\.cursor\.v3'/);
+  const manualSync = appSource.match(/async function synchronizeAllData\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(manualSync, /await syncCloudNow\(\)/);
+  assert.match(manualSync, /downloadFullCloudSnapshot\(session\)/);
+  const fullSnapshot = appSource.match(/async function downloadFullCloudSnapshot\(session\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(fullSnapshot, /let cursor = 0/);
+  assert.match(fullSnapshot, /saveCloudSyncCursor/);
 });
