@@ -117,7 +117,7 @@ export function buildAsaasCheckoutPayload({ planType, claim, appUrl, minutesToEx
       minutesToExpire,
       externalReference: claim.claimToken,
       callback,
-      items: [{ name: 'Plano anual MetriFlow', description: '12 meses de acesso, pagamento único à vista, sem parcelamento', quantity: 1, value: 450 }],
+      items: [{ name: 'Plano anual Metriflux', description: '12 meses de acesso, pagamento único à vista, sem parcelamento', quantity: 1, value: 450 }],
     };
   }
   const amountCents = Number(claim.priceCents);
@@ -130,7 +130,7 @@ export function buildAsaasCheckoutPayload({ planType, claim, appUrl, minutesToEx
     minutesToExpire,
     externalReference: claim.claimToken,
     callback,
-    items: [{ name: 'Plano mensal MetriFlow', description: amountCents === 3500 ? 'Uma das três primeiras mensalidades promocionais' : 'Mensalidade do plano MetriFlow', quantity: 1, value: amountCents / 100 }],
+    items: [{ name: 'Plano mensal Metriflux', description: amountCents === 3500 ? 'Uma das três primeiras mensalidades promocionais' : 'Mensalidade do plano Metriflux', quantity: 1, value: amountCents / 100 }],
     subscription: { cycle: 'MONTHLY', nextDueDate: claim.nextDueDate },
   };
 }
@@ -146,10 +146,10 @@ export function buildAsaasMonthlyPaymentLinkPayload({ claim, endDate }) {
   }
 
   return {
-    name: 'Assinatura mensal MetriFlow',
+    name: 'Assinatura mensal Metriflux',
     description: amountCents === 3500
-      ? 'Assinatura mensal MetriFlow: uma das três primeiras mensalidades promocionais.'
-      : 'Assinatura mensal MetriFlow.',
+      ? 'Assinatura mensal Metriflux: uma das três primeiras mensalidades promocionais.'
+      : 'Assinatura mensal Metriflux.',
     value: amountCents / 100,
     billingType: 'UNDEFINED',
     chargeType: 'RECURRENT',

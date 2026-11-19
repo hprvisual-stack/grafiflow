@@ -1,4 +1,4 @@
-# Supabase project configuration for MetriFlow.
+# Supabase project configuration for Metriflux.
 project_id = "grafiflow"
 
 # Bind the production deployment workflow to the new Supabase project.

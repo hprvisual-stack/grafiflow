@@ -30,7 +30,7 @@ export function errorResponse(error) {
 
 export function billingConfig() {
   if (process.env.GRAFIFLOW_BILLING_ENABLED !== 'true') {
-    throw new HttpError(503, 'A cobrança do MetriFlow ainda não está ativada.');
+    throw new HttpError(503, 'A cobrança do Metriflux ainda não está ativada.');
   }
 
   const supabaseUrl = String(process.env.GRAFIFLOW_SUPABASE_URL || '').replace(/\/$/, '');
@@ -40,7 +40,7 @@ export function billingConfig() {
   );
   const asaasApiKey = String(process.env.ASAAS_API_KEY || '');
   const asaasWebhookToken = String(process.env.ASAAS_WEBHOOK_AUTH_TOKEN || '');
-  const appUrl = String(process.env.GRAFIFLOW_APP_URL || 'https://grafiflow.vercel.app').replace(/\/$/, '');
+  const appUrl = String(process.env.GRAFIFLOW_APP_URL || 'https://metriflux.com.br').replace(/\/$/, '');
   const environment = String(process.env.ASAAS_ENVIRONMENT || 'sandbox').toLowerCase();
 
   if (!supabaseUrl || !supabaseAnonKey || !supabaseElevatedKey || !asaasApiKey || !asaasWebhookToken) {
@@ -115,7 +115,7 @@ export function assertSameOrigin(request, config) {
 export function bearerToken(request) {
   const authorization = request.headers.get('authorization') || '';
   const match = authorization.match(/^Bearer\s+([^\s]+)$/i);
-  if (!match || match[1].length > 8192) throw new HttpError(401, 'Entre na sua conta MetriFlow para continuar.');
+  if (!match || match[1].length > 8192) throw new HttpError(401, 'Entre na sua conta Metriflux para continuar.');
   return match[1];
 }
 
@@ -221,7 +221,7 @@ export async function callAsaas(path, { config, method = 'GET', body } = {}) {
       access_token: config.asaasApiKey,
       accept: 'application/json',
       'content-type': 'application/json',
-      'user-agent': 'MetriFlow/1.0',
+      'user-agent': 'Metriflux/1.0',
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: requestSignal(config, 18000),
