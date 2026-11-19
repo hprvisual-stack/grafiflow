@@ -10,7 +10,7 @@ const CLOUD_SESSION_KEY = 'grafiflow.auth.v1';
 const CLOUD_WORKSPACE_KEY = 'grafiflow.workspace.v1';
 const CLOUD_OWNER_KEY = 'grafiflow.local.owner.v1';
 const LEGACY_LOCAL_OWNER_KEY = 'metriflow.local.legacy-owner.v2';
-const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v1';
+const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v2';
 const SYNC_CURSOR_REPLAY_WINDOW = 100;
 const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
 const TEAM_SESSION_KEY = 'metriflow.team.session.v1';
@@ -5714,7 +5714,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-sync-cursor-replay').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-sync-cursor-backfill').catch(() => undefined);
 }
 
 initialize();
