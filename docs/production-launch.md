@@ -7,9 +7,9 @@ Atualizado em 19/11/2026. Este documento separa o que foi verificado no site, o 
 - `https://metriflux.com.br` resolve para a Vercel e responde HTTP 200.
 - `https://metriflux.com.br/api/config` informa o projeto Supabase `ytlcxazmktomawdpssgl` e retorna `billingEnabled=false` e `billingCheckoutEnabled=false`. Não há checkout ou cobrança ativa no site.
 - O beta atual não aplica trial cronometrado nem bloqueio de assinatura. A conta pode usar o aplicativo sem pagamento enquanto a flag continuar desligada.
-- O commit de produção verificado anteriormente contém o botão para salvar materiais do cálculo na galeria. Uma validação de navegador autenticada e de sincronização com dados reais não foi feita nesta checagem.
+- O botão para salvar materiais do cálculo está no código publicado. O deployment de produção acionado nesta rodada reportou conclusão com sucesso; a URL única do deployment é protegida pela Vercel e não permitiu validação visual anônima. A checagem da galeria foi feita no JavaScript público; fluxo autenticado e sincronização com dados reais não foram testados.
 - O CLI da Vercel não encontrou vínculo local de projeto neste checkout (`link_required`), e o Supabase CLI não está instalado/autenticado aqui. Portanto, não foi possível consultar ou alterar as configurações privadas dos painéis.
-- A branch principal da cópia pessoal está no commit `b5efbe3`; a principal do repositório `hprvisual-stack/grafiflow` consultada está em `54aeb72`. Os repositórios estão divergentes. A cópia pessoal é a que contém as atualizações mais recentes deste checkout.
+- A cópia pessoal recebeu a atualização mais recente. A branch `main` de `hprvisual-stack/grafiflow` permanece em `54aeb72`; a tentativa de escrita foi recusada com HTTP 403 para `vicktordarosa07-source`. Os repositórios estão divergentes.
 
 Este modo é adequado para testes fechados e uso interno sem custo adicional. A Vercel Hobby restringe o serviço a uso pessoal e não comercial; manter o plano gratuito significa adiar venda e divulgação comercial. Consulte [Vercel Hobby](https://vercel.com/docs/plans/hobby) e os [termos da Vercel](https://vercel.com/legal/terms).
 
