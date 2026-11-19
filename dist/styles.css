@@ -124,7 +124,8 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
 .material-editor-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .material-name-display { display: flex; align-items: center; gap: 9px; font-weight: 800; font-size: 0.88rem; }
 .material-color { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(10, 151, 224, 0.16); }
-.material-editor-actions { display: flex; align-items: center; gap: 9px; }
+.material-editor-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 9px; }
+.material-save-button { white-space: nowrap; }
 .lamination-badge { color: #0a7b84; border-color: #a9e1df; background: #edfafa; }
 .material-note { color: #0a7b84; border-left: 3px solid var(--accent-cyan); background: #edfafa; border-radius: 0 6px 6px 0; padding: 8px 10px; margin: 13px 0 0; font-size: 0.72rem; line-height: 1.4; }
 .area-mode-note { color: #0c6c91; border-left-color: #35a9d3; background: #edf8fd; }

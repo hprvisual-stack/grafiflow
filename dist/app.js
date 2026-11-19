@@ -2834,6 +2834,76 @@ function normalizeMaterial(material, { inferDefaultWidth = false } = {}) {
   };
 }
 
+function materialGalleryName(material) {
+  const normalized = normalizeMaterial(material);
+  if (!normalized.nameIsDefault && normalized.name.trim()) return normalized.name.trim();
+  if (normalized.calculationMode === 'sheet') return `Chapa ${formatNumber(normalized.widthCm, 1)} × ${formatNumber(normalized.heightCm, 1)} cm`;
+  if (normalized.calculationMode === 'area') return 'Impressão por m²';
+  return `Bobina ${formatNumber(normalized.widthCm, 1)} cm`;
+}
+
+function materialGalleryFingerprint(material) {
+  const normalized = normalizeMaterial(material);
+  return JSON.stringify({
+    name: materialGalleryName(normalized).toLocaleLowerCase('pt-BR'),
+    supplier: normalized.supplier.trim().toLocaleLowerCase('pt-BR'),
+    calculationMode: normalized.calculationMode,
+    widthCm: normalized.widthCm,
+    heightCm: normalized.heightCm,
+    price: normalized.price,
+    basis: normalized.basis,
+    volumePricing: normalized.volumePricing,
+    gapMm: normalized.gapMm,
+    rotate: normalized.rotate,
+  });
+}
+
+function matchingGalleryMaterial(material) {
+  const fingerprint = materialGalleryFingerprint(material);
+  return savedMaterials.find((saved) => canSeeTeamCatalogItem(saved) && materialGalleryFingerprint(saved) === fingerprint) || null;
+}
+
+async function saveCalculatedMaterial(id) {
+  const source = state.materials.find((material) => material.id === id);
+  if (!source) return;
+  if (teamAccess.team_enabled && !teamOperator) {
+    showToast('Entre com seu PIN de operador para salvar materiais na galeria.', 'error');
+    return;
+  }
+  if (matchingGalleryMaterial(source)) {
+    showToast('Este material já está na galeria.');
+    renderMaterialEditors();
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const material = normalizeMaterial({
+    ...source,
+    id: uid('saved-mat'),
+    name: materialGalleryName(source),
+    nameIsDefault: false,
+    widthIsDefault: false,
+    laminationMaterialId: null,
+    createdAt: now,
+    updatedAt: now,
+    _ownerOperatorId: teamAccess.team_enabled ? teamOperator?.id || null : null,
+    _isShared: false,
+  });
+  try {
+    await storePut('materials', material);
+    savedMaterials = [material, ...savedMaterials];
+    renderSavedMaterials();
+    renderMaterialPicker();
+    renderMaterialEditors();
+    showToast(calculationHasUnsavedChanges
+      ? 'Material salvo na galeria. A sincronização ocorrerá quando você salvar ou descartar o orçamento.'
+      : 'Material salvo na galeria.');
+  } catch (error) {
+    console.error('Não foi possível salvar o material usado no cálculo.', error);
+    showToast('Não foi possível salvar este material na galeria.', 'error');
+  }
+}
+
 function normalizeSupply(supply) {
   return {
     id: supply.id || uid('supply'),
@@ -3020,7 +3090,7 @@ function renderMaterialEditors() {
       <div class="material-editor" data-material-card="${escapeHtml(material.id)}">
         <div class="material-editor-top">
           <div class="material-name-display"><span class="material-color" style="background:${materialColor(index)}"></span><span class="material-title">${escapeHtml(material.name || 'Material')}</span></div>
-          <div class="material-editor-actions">${state.materials.some((candidate) => candidate.laminationMaterialId === material.id) ? '<span class="info-badge lamination-badge">Usado na laminação</span>' : ''}${state.materials.length > 1 ? `<button class="remove-button" type="button" data-action="remove-material" data-id="${escapeHtml(material.id)}">Remover</button>` : ''}</div>
+          <div class="material-editor-actions">${matchingGalleryMaterial(material) ? '<button class="secondary-button small-button material-save-button" type="button" disabled>✓ Na galeria</button>' : `<button class="secondary-button small-button material-save-button" type="button" data-action="save-calculated-material" data-id="${escapeHtml(material.id)}">Salvar na galeria</button>`}${state.materials.some((candidate) => candidate.laminationMaterialId === material.id) ? '<span class="info-badge lamination-badge">Usado na laminação</span>' : ''}${state.materials.length > 1 ? `<button class="remove-button" type="button" data-action="remove-material" data-id="${escapeHtml(material.id)}">Remover</button>` : ''}</div>
         </div>
         <div class="form-grid three-columns">
           <label class="field full-width"><span>Modo de cálculo</span><select data-material-id="${escapeHtml(material.id)}" data-material-field="calculationMode"><option value="roll" ${material.calculationMode === 'roll' ? 'selected' : ''}>Bobina — aproveitar por metro linear</option><option value="sheet" ${isSheet ? 'selected' : ''}>Chapa — aproveitar por chapa ou m²</option><option value="area" ${isArea ? 'selected' : ''}>Impressão terceirizada — cobrar por m²</option></select></label>
@@ -5367,6 +5437,7 @@ function handleClick(event) {
     if (action === 'remove-piece') removePiece(id);
     if (action === 'remove-supply') removeSupply(id);
     if (action === 'remove-material') removeMaterial(id);
+    if (action === 'save-calculated-material') void saveCalculatedMaterial(id);
     if (action === 'add-material-tier') addMaterialTier(id);
     if (action === 'remove-material-tier') removeMaterialTier(id, actionButton.dataset.tierIndex);
     if (action === 'add-saved-material-tier') addSavedMaterialTier();
@@ -5721,7 +5792,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-sync-full-rescan').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-material-gallery-save').catch(() => undefined);
 }
 
 initialize();
