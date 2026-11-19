@@ -1,17 +1,17 @@
-const CACHE_NAME = 'metriflow-static-v58';
+const CACHE_NAME = 'metriflow-static-v59';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20261118-sync-cursor-backfill',
-  './app.js?v=20261118-sync-cursor-backfill',
+  './styles.css?v=20261118-metriflux-beta',
+  './app.js?v=20261118-metriflux-beta',
   './money-input.js',
   './offline-billing.js',
   './cloud-sync-policy.js',
   './local-account-storage.js',
-  './api/config?v=20261118-sync-cursor-backfill',
-  './manifest.webmanifest?v=20261118-sync-cursor-backfill',
+  './api/config?v=20261118-metriflux-beta',
+  './manifest.webmanifest?v=20261118-metriflux-beta',
   './metriflow-favicon.png',
-  './metriflow-logo.png',
+  './metriflux-logo.png',
   './login-print-roll-v1.png',
   './metriflow-icon-192.png',
   './metriflow-icon-512.png',

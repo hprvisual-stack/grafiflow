@@ -1,6 +1,6 @@
 {
-  "name": "MetriFlow — orçamento gráfico",
-  "short_name": "MetriFlow",
+  "name": "Metriflux — orçamento gráfico",
+  "short_name": "Metriflux",
   "id": "./grafiflow-app",
   "description": "Aproveitamento de bobinas e chapas, custos, instalação e lucratividade offline.",
   "start_url": "./",
