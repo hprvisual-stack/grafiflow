@@ -697,3 +697,38 @@ input:disabled, select:disabled { color: #8195a1; background: #edf3f6; }
   .finance-month-field { width: 100%; }
   .team-access-card, .team-form-modal { padding: 19px; }
 }
+
+/* Vehicle glass measurement library */
+.glass-library-layout { display: grid; grid-template-columns: minmax(280px, .82fr) minmax(0, 1.18fr); gap: 16px; align-items: start; }
+.glass-library-layout > .panel { min-width: 0; }
+.glass-library-notice { display: grid; gap: 4px; margin: 0 0 16px; padding: 13px 15px; border: 1px solid #f1d18a; border-left: 4px solid #d69a1d; border-radius: 10px; color: #71500a; background: #fff9e9; font-size: .77rem; line-height: 1.5; }
+.glass-library-notice strong { color: #624400; }
+.glass-entry-panel .form-grid { gap: 12px; }
+.glass-rights-check { padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: #f8fbfd; }
+.glass-rights-check > span { display: flex; align-items: flex-start; gap: 9px; line-height: 1.45; }
+.glass-rights-check input { flex: 0 0 auto; margin: 2px 0 0; }
+.glass-search-field { margin: 0 0 14px; }
+.glass-load-more { width: 100%; margin-top: 12px; }
+.glass-record-list { display: grid; gap: 10px; }
+.glass-record-card { display: flex; justify-content: space-between; align-items: center; gap: 13px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.glass-record-card.is-review { border-color: #e9d5a6; background: #fffdf8; }
+.glass-record-main { display: grid; gap: 9px; min-width: 0; flex: 1; }
+.glass-record-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.glass-record-title > div { display: grid; gap: 4px; min-width: 0; }
+.glass-record-title strong { font-size: .83rem; overflow-wrap: anywhere; }
+.glass-record-title > div > span, .glass-record-main > small { color: var(--muted); font-size: .68rem; line-height: 1.4; overflow-wrap: anywhere; }
+.glass-record-main a { color: var(--accent-deep); }
+.glass-record-specs { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; color: var(--ink-2); background: #f1f8fc; font-size: .73rem; }
+.glass-record-specs strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+.glass-status { display: inline-flex; flex: 0 0 auto; width: fit-content; padding: 4px 7px; border-radius: 99px; color: #087f6a; background: #e9f9f5; font-size: .6rem; font-weight: 800; }
+.glass-status.is-pending { color: #805600; background: #fff3cf; }
+.glass-status.is-rejected { color: #9d3348; background: #fff0f2; }
+.glass-record-review-note { padding-left: 9px; border-left: 3px solid #e9bd64; color: #805600; font-size: .68rem; line-height: 1.45; }
+.glass-record-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; flex: 0 0 auto; }
+.glass-review-panel { margin-top: 16px; }
+@media (max-width: 1000px) { .glass-library-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 650px) {
+  .glass-record-card { align-items: stretch; flex-direction: column; }
+  .glass-record-title { align-items: flex-start; flex-direction: column; }
+  .glass-record-actions { justify-content: flex-start; }
+}

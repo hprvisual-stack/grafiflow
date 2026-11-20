@@ -63,6 +63,18 @@ const CATALOG_BASIS_LABELS = Object.freeze({
   hour: 'hora',
   fixed: 'valor fixo',
 });
+const VEHICLE_GLASS_PART_LABELS = Object.freeze({
+  windshield: 'Para-brisa',
+  rear_windshield: 'Vigia traseiro',
+  front_left: 'Porta dianteira esquerda',
+  front_right: 'Porta dianteira direita',
+  rear_left: 'Porta traseira esquerda',
+  rear_right: 'Porta traseira direita',
+  quarter_left: 'Vidro lateral fixo esquerdo',
+  quarter_right: 'Vidro lateral fixo direito',
+  sunroof: 'Teto solar',
+  other: 'Outro vidro',
+});
 const MATERIAL_COLORS = ['#0a97e0', '#35bdc4', '#072d54', '#f5c51d', '#e52b7a', '#3d82b5', '#0f9f8a', '#6a78d4'];
 const PIECE_COLORS = ['#0a97e0', '#e52b7a', '#0f9f8a', '#f59e0b', '#6a78d4', '#d946ef', '#16a6a1', '#ef4444', '#3d82b5', '#84a21b', '#a855f7', '#ea580c', '#0891b2', '#be123c', '#4f46e5', '#65a30d'];
 
@@ -144,6 +156,13 @@ let savedQuotes = [];
 let savedCustomers = [];
 let savedTeamTasks = [];
 let savedPurchases = [];
+let vehicleGlassRecords = [];
+let vehicleGlassLoading = false;
+let vehicleGlassError = '';
+let vehicleGlassHasMore = false;
+let vehicleGlassRequestId = 0;
+let vehicleGlassSearchTimer = null;
+let vehicleGlassCuratorAccess = false;
 let teamAccess = { team_enabled: false, dev_account: false, setup_required: false };
 let teamOperator = null;
 let teamOperatorSessionToken = '';
@@ -3248,6 +3267,311 @@ async function renderAdminWorkspace() {
   }).join('') : '<div class="empty-state"><strong>Nenhum item privado aguardando decisão</strong><p>Novos materiais cadastrados pelos operadores aparecerão aqui.</p></div>';
 }
 
+function glassRecordYears(record) {
+  return record.year_start === record.year_end ? String(record.year_start) : `${record.year_start}–${record.year_end}`;
+}
+
+function vehicleGlassStatusLabel(record) {
+  if (record.record_scope === 'library') return 'Biblioteca MetriFlux · validado';
+  if (record.record_status === 'pending_review') return 'Aguardando revisão';
+  if (record.record_status === 'rejected') return 'Revisão necessária';
+  return 'Biblioteca da empresa';
+}
+
+function canCurateVehicleGlass() {
+  return vehicleGlassCuratorAccess || teamAccess.dev_account === true || billingEntitlement?.dev_access === true;
+}
+
+function vehicleGlassMatchesSearch(record, query) {
+  if (!query) return true;
+  if (/^\d{4}$/.test(query) && Number(query) >= Number(record.year_start) && Number(query) <= Number(record.year_end)) return true;
+  const searchable = [record.make, record.model, record.generation, record.body_style, record.trim_level, glassRecordYears(record), VEHICLE_GLASS_PART_LABELS[record.glass_part], record.source_label]
+    .join(' ').toLocaleLowerCase('pt-BR');
+  return searchable.includes(query);
+}
+
+function vehicleGlassCard(record, { review = false } = {}) {
+  const years = glassRecordYears(record);
+  const title = `${record.make} ${record.model}`;
+  const details = [record.generation, record.body_style, record.trim_level].filter(Boolean).join(' · ');
+  const isWorkspace = record.record_scope === 'workspace';
+  const canManage = isWorkspace && (!teamAccess.team_enabled || teamOperator?.role === 'admin' || record.created_by_operator_id === teamOperator?.id);
+  const actions = review
+    ? `<button class="primary-button small-button" type="button" data-action="review-vehicle-glass" data-id="${escapeHtml(record.id)}" data-approve="true">Aprovar e publicar</button><button class="secondary-button small-button" type="button" data-action="review-vehicle-glass" data-id="${escapeHtml(record.id)}" data-approve="false">Rejeitar</button>`
+    : canManage ? `<button class="secondary-button small-button" type="button" data-action="edit-vehicle-glass" data-id="${escapeHtml(record.id)}">Editar</button><button class="secondary-button small-button" type="button" data-action="delete-vehicle-glass" data-id="${escapeHtml(record.id)}">Excluir</button>` : '';
+  const note = record.review_note ? `<small class="glass-record-review-note">${escapeHtml(record.review_note)}</small>` : '';
+  return `<article class="glass-record-card ${review ? 'is-review' : ''}">
+    <div class="glass-record-main"><div class="glass-record-title"><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(years)}${details ? ` · ${escapeHtml(details)}` : ''}</span></div><span class="glass-status ${record.record_status === 'rejected' ? 'is-rejected' : record.record_status === 'pending_review' ? 'is-pending' : ''}">${escapeHtml(vehicleGlassStatusLabel(record))}</span></div>
+      <div class="glass-record-specs"><span>${escapeHtml(VEHICLE_GLASS_PART_LABELS[record.glass_part] || 'Vidro')}</span><strong>${escapeHtml(formatNumber(num(record.width_mm), 2))} × ${escapeHtml(formatNumber(num(record.height_mm), 2))} mm</strong></div>
+      <small>Fonte: ${escapeHtml(record.source_label)}${record.license_name ? ` · Licença: ${escapeHtml(record.license_name)}` : ''}${record.source_url ? ` · <a href="${escapeHtml(record.source_url)}" target="_blank" rel="noopener noreferrer">consultar origem</a>` : ''}</small>${note}
+    </div>${actions ? `<div class="glass-record-actions">${actions}</div>` : ''}
+  </article>`;
+}
+
+function renderVehicleGlassLibrary() {
+  const list = document.getElementById('vehicle-glass-list');
+  const count = document.getElementById('vehicle-glass-count');
+  const search = document.getElementById('vehicle-glass-search')?.value.trim().toLocaleLowerCase('pt-BR') || '';
+  const reviewPanel = document.getElementById('vehicle-glass-review-panel');
+  const reviewList = document.getElementById('vehicle-glass-review-list');
+  if (!list) return;
+  const signedIn = Boolean(cloudSession?.access_token && cloudWorkspaceId);
+  const filtered = vehicleGlassRecords.filter((record) => record.record_scope !== 'review' && vehicleGlassMatchesSearch(record, search));
+  const reviewRecords = vehicleGlassRecords.filter((record) => record.record_scope === 'review' && record.record_status === 'pending_review');
+  if (count) count.textContent = `${filtered.length}${vehicleGlassHasMore ? '+' : ''} ${filtered.length === 1 && !vehicleGlassHasMore ? 'registro' : 'registros'}`;
+  const loadMoreButton = document.getElementById('vehicle-glass-load-more');
+  if (loadMoreButton) loadMoreButton.hidden = !signedIn || !vehicleGlassHasMore || Boolean(vehicleGlassError);
+  if (vehicleGlassLoading) {
+    list.innerHTML = '<div class="empty-state"><strong>Carregando biblioteca…</strong><p>Buscando os dados da sua empresa e os registros publicados.</p></div>';
+  } else if (vehicleGlassError) {
+    list.innerHTML = `<div class="empty-state"><strong>Biblioteca indisponível</strong><p>${escapeHtml(vehicleGlassError)}</p></div>`;
+  } else if (!signedIn) {
+    list.innerHTML = '<div class="empty-state"><strong>Conecte sua conta para acessar a biblioteca</strong><p>Os dados ficam associados ao espaço da sua empresa e não são compartilhados entre contas.</p><button class="secondary-button small-button" id="open-account-from-glass" type="button">Entrar na conta</button></div>';
+  } else if (filtered.length) {
+    list.innerHTML = filtered.map((record) => vehicleGlassCard(record)).join('');
+  } else {
+    list.innerHTML = `<div class="empty-state"><strong>${search ? 'Nenhuma medição encontrada' : 'Nenhum vidro cadastrado ainda'}</strong><p>${search ? 'Altere a busca ou cadastre esta combinação de veículo e vidro.' : 'Cadastre uma medição própria. A largura e altura servem como referência retangular e não geram o contorno de corte.'}</p></div>`;
+  }
+  if (reviewPanel) reviewPanel.hidden = !canCurateVehicleGlass();
+  if (reviewList) reviewList.innerHTML = !canCurateVehicleGlass()
+    ? ''
+    : reviewRecords.length
+      ? reviewRecords.map((record) => vehicleGlassCard(record, { review: true })).join('')
+      : '<div class="empty-state"><strong>Nenhuma sugestão pendente</strong><p>Novas propostas para a biblioteca geral aparecerão aqui.</p></div>';
+}
+
+async function loadVehicleGlassRecords({ quiet = false } = {}) {
+  const view = document.getElementById('vehicle-glass-view');
+  if (!view) return;
+  const requestId = ++vehicleGlassRequestId;
+  const search = document.getElementById('vehicle-glass-search')?.value.trim() || '';
+  if (!cloudSession?.access_token) {
+    vehicleGlassRecords = [];
+    vehicleGlassError = '';
+    vehicleGlassHasMore = false;
+    renderVehicleGlassLibrary();
+    return;
+  }
+  if (!navigator.onLine) {
+    renderVehicleGlassLibrary();
+    if (!quiet) showToast('Conecte-se à internet para carregar a biblioteca de vidros.', 'error');
+    return;
+  }
+  vehicleGlassLoading = true;
+  vehicleGlassError = '';
+  vehicleGlassRecords = [];
+  vehicleGlassHasMore = false;
+  renderVehicleGlassLibrary();
+  try {
+    if (!cloudWorkspaceId) await getWorkspaceMembership();
+    if (teamAccess.team_enabled && !teamOperatorSessionToken) {
+      vehicleGlassRecords = [];
+      openTeamAccessModal(teamAccess.setup_required);
+      return;
+    }
+    const curatorStatus = await cloudFetch('/rest/v1/rpc/can_curate_vehicle_glass', {
+      method: 'POST', token: cloudSession.access_token, body: {},
+    });
+    vehicleGlassCuratorAccess = curatorStatus === true;
+    const rows = await cloudFetch('/rest/v1/rpc/list_vehicle_glass_records', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken || null, p_search: search || null, p_offset: 0, p_limit: 200 },
+    });
+    if (!Array.isArray(rows)) throw new Error('O Supabase não retornou os registros da biblioteca.');
+    if (requestId !== vehicleGlassRequestId) return;
+    vehicleGlassHasMore = rows.length > 200;
+    vehicleGlassRecords = rows.slice(0, 200);
+    vehicleGlassError = '';
+  } catch (error) {
+    if (requestId !== vehicleGlassRequestId) return;
+    vehicleGlassRecords = [];
+    console.error('Falha ao carregar a biblioteca de vidros.', error);
+    vehicleGlassError = error.code === 'PGRST202' || /list_vehicle_glass_records|schema cache|could not find the function/i.test(error.message || '')
+      ? 'O banco ainda não recebeu a migração da biblioteca de vidros. Aplique a nova migração Supabase e atualize a página.'
+      : error.message || 'Não foi possível consultar o Supabase.';
+    if (!quiet) showToast(error.message || 'Não foi possível carregar a biblioteca de vidros.', 'error');
+  } finally {
+    if (requestId === vehicleGlassRequestId) {
+      vehicleGlassLoading = false;
+      renderVehicleGlassLibrary();
+    }
+  }
+}
+
+async function loadMoreVehicleGlassRecords() {
+  if (!vehicleGlassHasMore || !cloudSession?.access_token || !navigator.onLine) return;
+  const button = document.getElementById('vehicle-glass-load-more');
+  if (button) { button.disabled = true; button.textContent = 'Carregando…'; }
+  const requestId = ++vehicleGlassRequestId;
+  const search = document.getElementById('vehicle-glass-search')?.value.trim() || '';
+  try {
+    const rows = await cloudFetch('/rest/v1/rpc/list_vehicle_glass_records', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken || null, p_search: search || null, p_offset: vehicleGlassRecords.length, p_limit: 200 },
+    });
+    if (!Array.isArray(rows)) throw new Error('O Supabase não retornou os registros da biblioteca.');
+    if (requestId !== vehicleGlassRequestId) return;
+    vehicleGlassHasMore = rows.length > 200;
+    vehicleGlassRecords = [...vehicleGlassRecords, ...rows.slice(0, 200)];
+  } catch (error) {
+    if (requestId === vehicleGlassRequestId) showToast(error.message || 'Não foi possível carregar mais medições.', 'error');
+  } finally {
+    if (requestId === vehicleGlassRequestId) {
+      if (button) { button.disabled = false; button.textContent = 'Carregar mais medições'; }
+      renderVehicleGlassLibrary();
+    }
+  }
+}
+
+function syncVehicleGlassSourceFields() {
+  const source = document.getElementById('vehicle-glass-source-type')?.value || 'own_measurement';
+  const destination = document.getElementById('vehicle-glass-destination')?.value || 'workspace';
+  const licenseField = document.getElementById('vehicle-glass-license-field');
+  const license = document.getElementById('vehicle-glass-license');
+  if (licenseField) licenseField.hidden = !['licensed', 'open_license'].includes(source);
+  if (license) license.required = ['licensed', 'open_license'].includes(source);
+  const sourceLabel = document.getElementById('vehicle-glass-source-label');
+  if (sourceLabel && !sourceLabel.value.trim() && source === 'own_measurement') sourceLabel.value = 'Medição própria';
+  const rightsCopy = document.getElementById('vehicle-glass-rights-copy');
+  if (rightsCopy) rightsCopy.textContent = destination === 'review'
+    ? 'Confirmo que tenho direito de enviar estes dados e autorizo o MetriFlux, se aprovados, a publicá-los para os demais usuários.'
+    : 'Confirmo que medi este vidro ou tenho autorização para cadastrar estes dados.';
+}
+
+function resetVehicleGlassForm() {
+  const form = document.getElementById('vehicle-glass-form');
+  form?.reset();
+  setValue('vehicle-glass-id', '');
+  setValue('vehicle-glass-source-label', 'Medição própria');
+  setValue('vehicle-glass-destination', 'workspace');
+  const heading = document.getElementById('vehicle-glass-form-heading');
+  if (heading) heading.textContent = 'Cadastrar vidro';
+  syncVehicleGlassSourceFields();
+}
+
+function editVehicleGlassRecord(id) {
+  const record = vehicleGlassRecords.find((item) => item.id === id && item.record_scope === 'workspace');
+  if (!record) return;
+  setValue('vehicle-glass-id', record.id);
+  setValue('vehicle-glass-make', record.make);
+  setValue('vehicle-glass-model', record.model);
+  setValue('vehicle-glass-generation', record.generation);
+  setValue('vehicle-glass-year-start', record.year_start);
+  setValue('vehicle-glass-year-end', record.year_end);
+  setValue('vehicle-glass-body-style', record.body_style);
+  setValue('vehicle-glass-trim', record.trim_level);
+  setValue('vehicle-glass-part', record.glass_part);
+  setValue('vehicle-glass-width', record.width_mm);
+  setValue('vehicle-glass-height', record.height_mm);
+  setValue('vehicle-glass-source-type', record.source_type);
+  setValue('vehicle-glass-source-label', record.source_label);
+  setValue('vehicle-glass-source-url', record.source_url);
+  setValue('vehicle-glass-license', record.license_name);
+  setValue('vehicle-glass-destination', record.record_status === 'pending_review' ? 'review' : 'workspace');
+  const rights = document.getElementById('vehicle-glass-rights-confirmed');
+  if (rights) rights.checked = false;
+  const heading = document.getElementById('vehicle-glass-form-heading');
+  if (heading) heading.textContent = 'Editar medição';
+  syncVehicleGlassSourceFields();
+  document.getElementById('vehicle-glass-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('vehicle-glass-make')?.focus({ preventScroll: true });
+}
+
+async function saveVehicleGlassRecord(event) {
+  event.preventDefault();
+  if (!cloudSession?.access_token) {
+    openAccountModal();
+    return showToast('Entre na sua conta para salvar medições da biblioteca.', 'error');
+  }
+  if (!navigator.onLine) return showToast('Conecte-se à internet para salvar a medição na biblioteca.', 'error');
+  try {
+    if (!cloudWorkspaceId) await getWorkspaceMembership();
+    if (teamAccess.team_enabled && !teamOperatorSessionToken) {
+      openTeamAccessModal(teamAccess.setup_required);
+      return;
+    }
+    const requestedReview = document.getElementById('vehicle-glass-destination')?.value === 'review';
+    const submitButton = document.querySelector('#vehicle-glass-form button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    const result = await cloudFetch('/rest/v1/rpc/save_vehicle_glass_contribution', {
+      method: 'POST', token: cloudSession.access_token,
+      body: {
+        p_workspace_id: cloudWorkspaceId,
+        p_operator_session_token: teamOperatorSessionToken || null,
+        p_id: document.getElementById('vehicle-glass-id')?.value || null,
+        p_make: document.getElementById('vehicle-glass-make')?.value.trim(),
+        p_model: document.getElementById('vehicle-glass-model')?.value.trim(),
+        p_generation: document.getElementById('vehicle-glass-generation')?.value.trim() || '',
+        p_year_start: Number(document.getElementById('vehicle-glass-year-start')?.value),
+        p_year_end: Number(document.getElementById('vehicle-glass-year-end')?.value),
+        p_body_style: document.getElementById('vehicle-glass-body-style')?.value.trim() || '',
+        p_trim_level: document.getElementById('vehicle-glass-trim')?.value.trim() || '',
+        p_glass_part: document.getElementById('vehicle-glass-part')?.value,
+        p_width_mm: Number(document.getElementById('vehicle-glass-width')?.value),
+        p_height_mm: Number(document.getElementById('vehicle-glass-height')?.value),
+        p_source_type: document.getElementById('vehicle-glass-source-type')?.value,
+        p_source_label: document.getElementById('vehicle-glass-source-label')?.value.trim(),
+        p_source_url: document.getElementById('vehicle-glass-source-url')?.value.trim() || null,
+        p_license_name: document.getElementById('vehicle-glass-license')?.value.trim() || '',
+        p_submit_for_review: requestedReview,
+        p_rights_confirmed: document.getElementById('vehicle-glass-rights-confirmed')?.checked === true,
+      },
+    });
+    if (typeof result !== 'string') throw new Error('O Supabase não confirmou o salvamento da medição.');
+    resetVehicleGlassForm();
+    await loadVehicleGlassRecords({ quiet: true });
+    showToast(requestedReview
+      ? 'Medição enviada para revisão da biblioteca geral.'
+      : 'Medição salva na biblioteca da empresa.');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível salvar a medição.', 'error');
+  } finally {
+    const submitButton = document.querySelector('#vehicle-glass-form button[type="submit"]');
+    if (submitButton) submitButton.disabled = false;
+  }
+}
+
+async function deleteVehicleGlassRecord(id) {
+  const record = vehicleGlassRecords.find((item) => item.id === id && item.record_scope === 'workspace');
+  if (!record || !window.confirm(`Excluir a medição de ${record.make} ${record.model} (${VEHICLE_GLASS_PART_LABELS[record.glass_part] || 'vidro'})?`)) return;
+  try {
+    await cloudFetch('/rest/v1/rpc/delete_vehicle_glass_contribution', {
+      method: 'POST', token: cloudSession.access_token,
+      body: { p_workspace_id: cloudWorkspaceId, p_operator_session_token: teamOperatorSessionToken || null, p_id: id },
+    });
+    if (document.getElementById('vehicle-glass-id')?.value === id) resetVehicleGlassForm();
+    await loadVehicleGlassRecords({ quiet: true });
+    showToast('Medição removida da biblioteca da empresa.');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível excluir a medição.', 'error');
+  }
+}
+
+async function reviewVehicleGlassRecord(id, approve) {
+  const record = vehicleGlassRecords.find((item) => item.id === id && item.record_scope === 'review');
+  if (!record || !canCurateVehicleGlass()) return;
+  const defaultNote = approve ? 'Origem, licença e dimensão conferidas.' : '';
+  const note = window.prompt(approve ? 'Observação de validação (opcional):' : 'Motivo da rejeição:', defaultNote);
+  if (note === null) return;
+  if (!approve && !note.trim()) return showToast('Informe o motivo da rejeição.', 'error');
+  try {
+    await cloudFetch('/rest/v1/rpc/review_vehicle_glass_contribution', {
+      method: 'POST', token: cloudSession.access_token,
+      body: {
+        p_reviewer_workspace_id: cloudWorkspaceId,
+        p_operator_session_token: teamOperatorSessionToken || null,
+        p_contribution_id: id,
+        p_approve: approve,
+        p_review_note: note.trim(),
+      },
+    });
+    await loadVehicleGlassRecords({ quiet: true });
+    showToast(approve ? 'Medição validada e publicada na biblioteca geral.' : 'Sugestão rejeitada com o motivo registrado.');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível revisar esta sugestão.', 'error');
+  }
+}
+
 function renderFinanceWorkspace() {
   const container = document.getElementById('finance-monthly-metrics');
   if (!container) return;
@@ -4685,7 +5009,7 @@ let installationExpanded = true;
 function switchView(viewId) {
   if ((viewId === 'team-view' || viewId === 'admin-view') && !teamAccess.team_enabled) return switchView('calculator-view');
   if (viewId === 'admin-view' && teamOperator?.role !== 'admin') return switchView('team-view');
-  if (teamAccess.team_enabled && !teamOperator && ['team-view','admin-view','finance-view','materials-view','quotes-view','customers-view','calculator-view'].includes(viewId)) {
+  if (teamAccess.team_enabled && !teamOperator && ['team-view','admin-view','finance-view','materials-view','vehicle-glass-view','quotes-view','customers-view','calculator-view'].includes(viewId)) {
     openTeamAccessModal(teamAccess.setup_required);
     return;
   }
@@ -4696,6 +5020,7 @@ function switchView(viewId) {
     'quotes-view': ['HISTÓRICO LOCAL', 'Orçamentos'],
     'customers-view': ['RELACIONAMENTO', 'Clientes'],
     'materials-view': ['CATÁLOGO LOCAL', 'Materiais'],
+    'vehicle-glass-view': ['BASE DE MEDIÇÕES', 'Biblioteca de vidros'],
     'team-view': ['OPERAÇÃO', 'Equipe'],
     'admin-view': ['ACESSO RESTRITO', 'Área de ADM'],
     'finance-view': ['GESTÃO FINANCEIRA', 'Financeiro'],
@@ -4712,6 +5037,7 @@ function switchView(viewId) {
     renderSavedMaterials();
     renderCatalogItems();
   }
+  if (viewId === 'vehicle-glass-view') void loadVehicleGlassRecords();
   if (viewId === 'team-view') renderTeamWorkspace();
   if (viewId === 'admin-view') void renderAdminWorkspace();
   if (viewId === 'finance-view') renderFinanceWorkspace();
@@ -5478,6 +5804,9 @@ function handleClick(event) {
     if (action === 'share-team-catalog') void setCatalogVisibility(actionButton.dataset.recordType, id, actionButton.dataset.shared === 'true');
     if (action === 'record-catalog-purchase') recordCatalogPurchase(id);
     if (action === 'delete-purchase') void deleteCatalogPurchase(id);
+    if (action === 'edit-vehicle-glass') editVehicleGlassRecord(id);
+    if (action === 'delete-vehicle-glass') void deleteVehicleGlassRecord(id);
+    if (action === 'review-vehicle-glass') void reviewVehicleGlassRecord(id, actionButton.dataset.approve === 'true');
     return;
   }
   const id = event.target.closest('button')?.id;
@@ -5505,6 +5834,10 @@ function handleClick(event) {
   if (id === 'team-change-pin-button') void teamSignOut();
   if (id === 'team-new-task-button') openTeamTaskForm();
   if (id === 'finance-new-purchase') openPurchaseForm();
+  if (id === 'vehicle-glass-refresh') void loadVehicleGlassRecords();
+  if (id === 'vehicle-glass-load-more') void loadMoreVehicleGlassRecords();
+  if (id === 'vehicle-glass-cancel') resetVehicleGlassForm();
+  if (id === 'open-account-from-glass') openAccountModal();
   if (id === 'team-pin-account-switch') void signOutCloudAccount();
   if (id === 'team-member-cancel') {
     document.getElementById('team-member-form')?.reset();
@@ -5593,6 +5926,20 @@ function handleInput(event) {
     renderCustomers();
     return;
   }
+  if (element.id === 'vehicle-glass-search' && event.type === 'input') {
+    clearTimeout(vehicleGlassSearchTimer);
+    vehicleGlassSearchTimer = setTimeout(() => void loadVehicleGlassRecords({ quiet: true }), 350);
+    return;
+  }
+  if (element.id === 'vehicle-glass-source-type' && event.type === 'change') {
+    syncVehicleGlassSourceFields();
+    return;
+  }
+  if (element.id === 'vehicle-glass-destination' && event.type === 'change') {
+    syncVehicleGlassSourceFields();
+    return;
+  }
+  if (element.closest('#vehicle-glass-form')) return;
   if (element.id === 'quote-customer-select') {
     if (event.type !== 'change') return;
     const customer = savedCustomers.find((entry) => entry.id === element.value);
@@ -5697,6 +6044,7 @@ function initialize() {
   document.getElementById('team-task-form')?.addEventListener('submit', submitTeamTask);
   document.getElementById('team-member-form')?.addEventListener('submit', saveTeamMember);
   document.getElementById('purchase-form')?.addEventListener('submit', submitCatalogPurchase);
+  document.getElementById('vehicle-glass-form')?.addEventListener('submit', saveVehicleGlassRecord);
   document.getElementById('restore-input')?.addEventListener('change', (event) => importBackup(event.target.files?.[0]));
   document.getElementById('layout-modal')?.addEventListener('click', (event) => {
     if (event.target.id === 'layout-modal') event.currentTarget.hidden = true;
@@ -5792,7 +6140,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261118-material-gallery-save').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261120-vehicle-glass').catch(() => undefined);
 }
 
 initialize();
