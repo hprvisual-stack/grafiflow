@@ -15,21 +15,21 @@ Atualizado em 22/11/2026. Este documento separa o que foi verificado no site, o 
 
 Este modo é adequado para testes fechados e uso interno sem custo adicional. A Vercel Hobby restringe o serviço a uso pessoal e não comercial; manter o plano gratuito significa adiar venda e divulgação comercial. Consulte [Vercel Hobby](https://vercel.com/docs/plans/hobby) e os [termos da Vercel](https://vercel.com/legal/terms).
 
-## Planos definidos, mas ainda não implementados no checkout
+## Planos implementados no código; migração e homologação pendentes
 
 | Plano | Mensal nos 3 primeiros meses | Mensal a partir do 4º | Anual à vista |
 | --- | ---: | ---: | ---: |
-| Individual | R$ 35,00 | R$ 50,00 | R$ 500,00 |
-| Equipe até 4 pessoas | R$ 75,00 | R$ 100,00 | R$ 1.000,00 |
-| Equipe com 5+ pessoas | R$ 150,00 | R$ 200,00 | R$ 2.000,00 |
+| Individual | R$ 50,00 | R$ 75,00 | R$ 500,00 |
+| Equipe até 4 PINs (inclui ADM) | R$ 100,00 | R$ 130,00 | R$ 1.000,00 |
+| Equipe 5+ PINs, sem limite | R$ 150,00 | R$ 200,00 | R$ 2.000,00 |
 
-Os planos preveem trial de 15 dias. A versão de cobrança que está no repositório ainda suporta apenas plano mensal/anual sem seleção comercial completa de equipe, anuncia anual de R$ 450,00 e retorna `team_checkout_available=false`. Por isso, não habilite `GRAFIFLOW_BILLING_ENABLED`: se o checkout legado fosse aberto, mostraria condições divergentes das definidas para o Metriflux.
+Todos os seis planos preveem trial de 15 dias. O app, as APIs Asaas e as migrações versionadas agora implementam os preços e os limites de equipe. O catálogo ainda precisa ser aplicado e verificado no Supabase; o checkout segue desligado em produção. A conta Vercel Hobby exige adiar vendas até mudar para uma hospedagem que permita uso comercial.
 
 ## Pendências para abrir cadastro externo
 
 - [ ] **E-mail de confirmação e recuperação:** confirmar o estado de Auth no projeto Supabase. O SMTP padrão da Supabase só envia para membros da equipe do projeto e limita o envio; para usuários externos é necessário configurar um SMTP próprio e testar confirmação e redefinição de senha. O domínio do site já está ativo, mas os registros de e-mail (SPF/DKIM/DMARC) e as credenciais SMTP não foram verificados. A documentação da Supabase descreve as limitações do [SMTP padrão](https://supabase.com/docs/guides/auth/auth-smtp).
 - [ ] **Limite de cinco senhas erradas:** o hook `Password Verification Attempt`, usado para aplicar exatamente esse comportamento, está disponível apenas em planos Supabase Teams e Enterprise. No Free não se deve anunciar esse limite como ativo. Fonte: [Auth Hooks](https://supabase.com/docs/guides/auth/auth-hooks).
-- [ ] **Implementar os seis preços/tipos de plano:** atualizar a seleção de plano, limites de membros, APIs, RPCs/migrações Supabase, estado da assinatura, Asaas e webhooks para suportar individual, equipe até 4 e equipe 5+, mensal e anual. Depois, homologar em projeto Supabase e conta Asaas Sandbox isolados.
+- [ ] **Aplicar catálogo Supabase:** verificar a migração de equipe `20261106000000_team_operations_finance.sql`; depois aplicar `20261117235201_metriflux_plan_catalog_and_team_limits.sql` e `20261122150000_metriflux_current_plan_prices.sql`, e confirmar seis planos, valores, trial de 15 dias e limites 4/5+ no banco correto.
 - [ ] **Asaas de produção:** confirmar que existe conta de produção liberada, cadastrar chave de produção e token exclusivo do webhook diretamente nos painéis, instalar endpoint `https://metriflux.com.br/api/asaas/webhook` e testar pagamento, atraso, cancelamento, estorno e reentrega de eventos. Não reutilizar chave/token Sandbox em produção.
 - [ ] **Termos e privacidade:** completar os campos pendentes com razão social/responsável, contato, finalidade e retenção de dados, cancelamento, exclusão/exportação e condições de cobrança. Os dados legais precisam vir do proprietário e devem ser revisados antes de venda.
 - [ ] **Backups e continuidade:** criar e testar uma exportação/restauração do banco e dos arquivos. O Supabase Free não oferece backup diário para download e pode pausar projetos inativos. Consulte [backups](https://supabase.com/docs/guides/platform/backups) e [limites do Free](https://supabase.com/docs/guides/platform/going-into-prod#understand-your-project).

@@ -14,6 +14,36 @@ const SYNC_CURSOR_KEY = 'grafiflow.sync.cursor.v3';
 const SYNC_CURSOR_REPLAY_WINDOW = 100;
 const BILLING_CACHE_KEY = 'grafiflow.billing.entitlement.v1';
 const TEAM_SESSION_KEY = 'metriflow.team.session.v1';
+const BILLING_PLANS = [
+  { code: 'individual_monthly_v2', label: 'Individual mensal', group: 'INDIVIDUAL', cycle: 'monthly', promo: 5000, standard: 7500, seats: 'Uso individual' },
+  { code: 'individual_annual', label: 'Individual anual', group: 'INDIVIDUAL', cycle: 'annual', annual: 50000, seats: 'Uso individual' },
+  { code: 'team_4_monthly_v2', label: 'Equipe até 4 mensal', group: 'EQUIPE', cycle: 'monthly', promo: 10000, standard: 13000, seats: 'Até 4 PINs ativos, incluindo o ADM' },
+  { code: 'team_4_annual', label: 'Equipe até 4 anual', group: 'EQUIPE', cycle: 'annual', annual: 100000, seats: 'Até 4 PINs ativos, incluindo o ADM' },
+  { code: 'team_unlimited_monthly', label: 'Equipe ilimitada mensal', group: 'EQUIPE', cycle: 'monthly', promo: 15000, standard: 20000, seats: '5 ou mais PINs; sem limite de colaboradores' },
+  { code: 'team_unlimited_annual', label: 'Equipe ilimitada anual', group: 'EQUIPE', cycle: 'annual', annual: 200000, seats: '5 ou mais PINs; sem limite de colaboradores' },
+];
+const billingMoney = (cents) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(cents) / 100);
+
+function renderBillingPlans() {
+  const markup = BILLING_PLANS.map((plan) => {
+    const price = plan.cycle === 'monthly'
+      ? `<strong>${billingMoney(plan.promo)}/mês por 3 meses</strong>`
+      : `<strong>${billingMoney(plan.annual)}/ano</strong>`;
+    const terms = plan.cycle === 'monthly'
+      ? `15 dias grátis. Após o teste, assine por ${billingMoney(plan.promo)}/mês nos três primeiros pagamentos e ${billingMoney(plan.standard)}/mês a partir do quarto.`
+      : `15 dias grátis. Após o teste, assine por ${billingMoney(plan.annual)} para 12 meses, em pagamento à vista.`;
+    const actionLabel = plan.cycle === 'monthly' ? 'Assinar mensal' : 'Assinar anual';
+    return `<article class="billing-plan-card"><span class="section-kicker">${plan.group}</span><h4>${plan.label}</h4>${price}<p>${plan.seats}. ${terms}</p><button class="${plan.cycle === 'annual' ? 'primary-button' : 'secondary-button'}" type="button" data-billing-plan="${plan.code}">${actionLabel}</button></article>`;
+  }).join('');
+  for (const id of ['billing-plan-options', 'billing-gate-plans']) {
+    const container = document.getElementById(id);
+    if (container) container.innerHTML = markup;
+  }
+  const trialSelect = document.getElementById('billing-trial-plan');
+  if (trialSelect) {
+    trialSelect.innerHTML = BILLING_PLANS.map((plan) => `<option value="${plan.code}">${plan.label} — ${plan.seats}</option>`).join('');
+  }
+}
 const MAX_ROLL_LENGTH_MM = 50000;
 const MAX_LAYOUT_PIECES_PER_MATERIAL = 1000;
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
@@ -873,9 +903,10 @@ function applyBillingEntitlement(entitlement, periods = billingHistory, { persis
   const gateCheckoutNotice = document.getElementById('billing-gate-checkout-notice');
   const gatePlans = document.getElementById('billing-gate-plans');
   const trialButton = document.getElementById('billing-start-trial-button');
+  const trialChoice = document.querySelector('.billing-trial-choice');
   const trialNote = document.getElementById('billing-trial-note');
   const startTrialAvailable = entitlement.state === 'trial_not_started' && !entitlement.trial_used && !entitlement.legacy_access;
-  if (gatePlans) gatePlans.hidden = !isBillingCheckoutEnabled();
+  if (gatePlans) gatePlans.hidden = false;
   if (gateCheckoutNotice) gateCheckoutNotice.hidden = isBillingCheckoutEnabled();
   if (title) {
     const titles = {
@@ -914,6 +945,7 @@ function applyBillingEntitlement(entitlement, periods = billingHistory, { persis
     if (status) { status.hidden = false; status.textContent = 'Conta DEV: trial e cobrança não serão iniciados nesta conta.'; }
   }
   if (trialButton) trialButton.hidden = !startTrialAvailable;
+  if (trialChoice) trialChoice.hidden = !startTrialAvailable;
   if (trialNote) trialNote.hidden = !startTrialAvailable;
   renderWorkspaceBilling(entitlement, billingHistory);
   renderBillingCountdown();
@@ -961,16 +993,15 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
   const panel = document.getElementById('billing-panel');
   const badge = document.getElementById('billing-status-badge');
   const description = document.getElementById('billing-description');
-  const button = document.getElementById('billing-checkout-button');
-  const annualButton = document.getElementById('billing-annual-checkout-button');
-  if (!panel || !badge || !description || !button || !annualButton) return;
+  if (!panel || !badge || !description) return;
 
   panel.hidden = !isBillingEnabled();
   if (panel.hidden) return;
   const checkoutAvailable = isBillingCheckoutEnabled();
+  const checkoutAllowedForState = checkoutAvailable && subscription?.state !== 'trial_active';
   const planOptions = document.getElementById('billing-plan-options');
   const checkoutNotice = document.getElementById('billing-checkout-notice');
-  if (planOptions) planOptions.hidden = !checkoutAvailable;
+  if (planOptions) planOptions.hidden = false;
   if (checkoutNotice) checkoutNotice.hidden = checkoutAvailable;
 
   const state = subscription?.state || 'trial_not_started';
@@ -994,13 +1025,13 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
       ? 'Esta conta tem acesso gratuito permanente ao Metriflux; não é necessário contratar um plano.'
       : 'Este espaço já existia antes da ativação da cobrança e mantém seu acesso e seus dados preservados.',
     trial_not_started: 'Seu teste começa quando você escolher “Inicie seu teste grátis de 15 dias”. A contratação de um plano também está disponível.',
-    trial_active: `Teste gratuito ativo até ${formatBillingDate(subscription?.trial_ends_at, true)}. Depois, o acesso depende de uma assinatura confirmada.`,
+    trial_active: `Teste gratuito ativo até ${formatBillingDate(subscription?.trial_ends_at, true)}. O teste não gera cobrança; depois, escolha um plano e conclua o checkout para continuar.`,
     trial_expired: 'O teste gratuito terminou. Para continuar usando o Metriflux, escolha um dos planos abaixo.',
     subscription_active: subscription?.pending_plan_type
       ? `Período pago ativo até ${formatBillingDate(subscription.current_period_end, true)}. A mudança para o plano ${subscription.pending_plan_type === 'annual' ? 'anual' : 'mensal'} está programada para o próximo ciclo.`
       : subscription?.plan_type === 'annual'
-        ? `Plano anual ativo até ${formatBillingDate(subscription.current_period_end, true)}. A próxima renovação custa R$ 450,00 à vista.`
-        : `Assinatura ativa. ${paidCycles < 3 ? `${Math.min(paidCycles, 3)} de 3 ciclos promocionais pagos; próxima mensalidade ${formatBillingMoney(3500)}.` : 'As próximas mensalidades são de R$ 50,00.'}`,
+        ? `Plano anual ativo até ${formatBillingDate(subscription.current_period_end, true)}. A próxima renovação custa ${formatBillingMoney(subscription?.annual_amount_cents || 50000)} à vista.`
+        : `Assinatura ativa. ${paidCycles < 3 ? `${Math.min(paidCycles, 3)} de 3 ciclos promocionais pagos; próxima mensalidade ${formatBillingMoney(subscription?.monthly_amount_cents || 5000)}.` : `Próxima mensalidade ${formatBillingMoney(subscription?.monthly_amount_cents || 7500)}.`}`,
     grace_active: `Sua assinatura está na carência. Regularize até ${formatBillingDate(subscription?.grace_period_ends_at, true)} para manter o acesso sem interrupção.`,
     subscription_expired: 'O período de carência terminou. Regularize sua assinatura para reativar o acesso; seus dados foram preservados.',
     payment_pending: 'Aguardando o Asaas confirmar um pagamento. O retorno do checkout, sozinho, não libera o sistema.',
@@ -1009,11 +1040,12 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
   description.textContent = descriptions[state] || 'Consulte os planos disponíveis para sua conta.';
 
   const planNames = { monthly: 'Mensal', annual: 'Anual', legacy: subscription?.permanent_free ? 'Gratuito permanente' : 'Acesso garantido' };
+  const currentBillingPlan = BILLING_PLANS.find((plan) => plan.code === subscription?.billing_plan_code);
   const currentPlan = document.getElementById('billing-current-plan');
   const periodLabel = document.getElementById('billing-period-label');
   const dueLabel = document.getElementById('billing-due-label');
   const lastPaymentLabel = document.getElementById('billing-last-payment-label');
-  if (currentPlan) currentPlan.textContent = planNames[subscription?.plan_type] || (state === 'trial_active' ? 'Teste grátis' : '—');
+  if (currentPlan) currentPlan.textContent = currentBillingPlan?.label || subscription?.billing_plan_name || planNames[subscription?.plan_type] || (state === 'trial_active' ? 'Teste grátis' : '—');
   if (periodLabel) periodLabel.textContent = subscription?.current_period_start && subscription?.current_period_end
     ? `${formatBillingDate(subscription.current_period_start)} — ${formatBillingDate(subscription.current_period_end)}`
     : subscription?.trial_started_at && subscription?.trial_ends_at
@@ -1021,20 +1053,10 @@ function renderWorkspaceBilling(subscription = null, periods = billingHistory) {
   if (dueLabel) dueLabel.textContent = formatBillingDate(subscription?.next_billing_at || subscription?.current_period_end);
   if (lastPaymentLabel) lastPaymentLabel.textContent = formatBillingDate(subscription?.last_payment_at, true);
 
-  button.disabled = !navigator.onLine || !cloudSession?.access_token || Boolean(button.dataset.pending);
-  button.hidden = Boolean(subscription?.legacy_access) || !checkoutAvailable;
-  button.textContent = subscription?.plan_type === 'annual' && subscription?.access_allowed
-    ? 'Mudar para mensal no próximo ciclo'
-    : subscription?.provider_subscription_id && subscription?.plan_type === 'monthly'
-      ? 'Pagar próxima mensalidade'
-      : 'Assinar plano mensal';
-  annualButton.disabled = !navigator.onLine || !cloudSession?.access_token || Boolean(annualButton.dataset.pending);
-  annualButton.hidden = Boolean(subscription?.legacy_access) || !checkoutAvailable;
-  annualButton.textContent = subscription?.plan_type === 'annual' && subscription?.access_allowed
-    ? 'Renovar plano anual'
-    : subscription?.plan_type === 'monthly' && subscription?.access_allowed
-      ? 'Mudar para anual no próximo ciclo'
-      : 'Assinar plano anual';
+  document.querySelectorAll('[data-billing-plan]').forEach((planButton) => {
+    planButton.disabled = !navigator.onLine || !cloudSession?.access_token || !checkoutAllowedForState || Boolean(planButton.dataset.pending);
+    if (subscription?.legacy_access) planButton.disabled = true;
+  });
   const advanceBox = document.getElementById('billing-advance-box');
   const advanceTitle = document.getElementById('billing-advance-title');
   const advanceCopy = document.getElementById('billing-advance-copy');
@@ -1104,15 +1126,17 @@ async function loadWorkspaceBilling() {
 async function startGrafiflowTrial() {
   const button = document.getElementById('billing-start-trial-button');
   if (!button || !isBillingEnabled() || button.disabled) return;
+  const planCode = String(document.getElementById('billing-trial-plan')?.value || 'individual_monthly_v2');
+  if (!BILLING_PLANS.some((plan) => plan.code === planCode)) return;
   button.disabled = true;
   button.textContent = 'Ativando teste…';
   try {
     const session = await usableCloudSession();
     if (!cloudWorkspaceId) await getWorkspaceMembership();
-    const entitlement = await cloudFetch('/rest/v1/rpc/start_grafiflow_trial', {
+    const entitlement = await cloudFetch('/rest/v1/rpc/start_grafiflow_plan_trial', {
       method: 'POST',
       token: session.access_token,
-      body: { p_workspace_id: cloudWorkspaceId },
+      body: { p_workspace_id: cloudWorkspaceId, p_plan_code: planCode },
     });
     applyBillingEntitlement(entitlement, billingHistory);
     await loadWorkspaceBilling();
@@ -1127,8 +1151,16 @@ async function startGrafiflowTrial() {
   }
 }
 
-async function startAsaasCheckout(planType = 'monthly', sourceButton = null) {
+async function startAsaasCheckout(planCode = 'individual_monthly_v2', sourceButton = null) {
   if (!isBillingEnabled()) return;
+  if (billingEntitlement?.state === 'trial_active') {
+    const message = 'Seu teste grátis ainda está ativo. O checkout ficará disponível quando os 15 dias terminarem.';
+    setBillingFeedback(message, true);
+    const gateStatus = document.getElementById('billing-gate-status');
+    if (gateStatus) { gateStatus.hidden = false; gateStatus.textContent = message; }
+    if (sourceButton) sourceButton.focus();
+    return;
+  }
   if (!isBillingCheckoutEnabled()) {
     const message = 'Checkout indisponível porque o ambiente Asaas não corresponde a este deployment. Use Sandbox em Preview e credenciais de produção somente em Production. O teste grátis continua funcionando.';
     setBillingFeedback(message, true);
@@ -1148,7 +1180,7 @@ async function startAsaasCheckout(planType = 'monthly', sourceButton = null) {
     const response = await fetch('/api/asaas/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ workspaceId: cloudWorkspaceId, planType }),
+      body: JSON.stringify({ workspaceId: cloudWorkspaceId, planCode }),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Não foi possível iniciar o checkout.');
@@ -5815,7 +5847,9 @@ function updateConnectionStatus() {
   sidebarDot?.classList.toggle('online', online);
   if (sidebarText) sidebarText.textContent = online ? 'Conexão disponível' : 'Modo local ativo';
   document.querySelectorAll('[data-billing-plan], #billing-start-trial-button').forEach((button) => {
-    if (button.dataset.pending !== 'true') button.disabled = !online || !cloudSession?.access_token;
+    if (button.dataset.pending === 'true') return;
+    const checkoutPlan = button.hasAttribute('data-billing-plan');
+    button.disabled = !online || !cloudSession?.access_token || (checkoutPlan && (!isBillingCheckoutEnabled() || billingEntitlement?.state === 'trial_active'));
   });
   const advanceButton = document.getElementById('billing-advance-button');
   if (advanceButton) {
@@ -6146,6 +6180,7 @@ function clearPresetTextOnFocus(event) {
 }
 
 function initialize() {
+  renderBillingPlans();
   initializeCrossTabSync();
   document.addEventListener('click', handleClick);
   document.addEventListener('click', handlePasswordVisibilityClick);

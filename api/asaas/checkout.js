@@ -11,6 +11,7 @@ import {
   callAsaas,
   checkoutConstants,
   errorResponse,
+  getBillingPlan,
   HttpError,
   isPermanentFreeAccount,
   jsonResponse,
@@ -54,18 +55,19 @@ export async function POST(request) {
     try { body = await request.json(); } catch { throw new HttpError(400, 'Dados da solicitação inválidos.'); }
 
     workspaceId = requireWorkspaceId(body?.workspaceId);
-    const planType = String(body?.planType || 'monthly');
-    if (!['monthly', 'annual'].includes(planType)) throw new HttpError(400, 'Escolha um plano mensal ou anual.');
+    const planCode = String(body?.planCode || (body?.planType === 'annual' ? 'individual_annual' : 'individual_monthly_v2'));
+    const plan = getBillingPlan(planCode);
+    if (!plan) throw new HttpError(400, 'Escolha um dos planos disponíveis.');
     const { user } = await authenticatedUser(request, config);
     await assertWorkspaceOwner(workspaceId, user, config);
     if (await isPermanentFreeAccount(user, config)) {
       throw new HttpError(409, 'Esta conta tem acesso gratuito permanente e não precisa contratar um plano.');
     }
 
-    const claimed = await supabaseRequest('/rest/v1/rpc/claim_grafiflow_checkout', {
+    const claimed = await supabaseRequest('/rest/v1/rpc/claim_grafiflow_plan_checkout', {
       config,
       method: 'POST',
-      body: { p_workspace_id: workspaceId, p_plan_type: planType },
+      body: { p_workspace_id: workspaceId, p_plan_code: planCode },
     });
     if (claimed?.action === 'reuse') {
       return jsonResponse({ checkoutUrl: asaasCheckoutUrl({ id: claimed.checkoutId, link: claimed.checkoutUrl }, config), reused: true });
@@ -76,9 +78,11 @@ export async function POST(request) {
       return jsonResponse({ paymentUrl: upcoming.url, paymentId: upcoming.payment.id, dueDate: upcoming.payment.dueDate, amount: upcoming.payment.value, advance: true });
     }
     if (claimed?.action === 'legacy_access') throw new HttpError(409, 'Este espaço já possui acesso garantido e não precisa contratar um plano.');
+    if (claimed?.action === 'trial_active') throw new HttpError(409, 'O teste grátis ainda está ativo. O checkout ficará disponível quando os 15 dias terminarem.');
     if (claimed?.action === 'annual_period_already_paid_or_pending') throw new HttpError(409, 'A próxima anuidade já está paga ou existe uma renovação em processamento. Consulte Minha Assinatura.');
     if (claimed?.action === 'plan_already_scheduled') throw new HttpError(409, 'A mudança para o plano mensal já está programada para o fim do período anual.');
     if (claimed?.action === 'plan_change_pending') throw new HttpError(409, 'Já existe uma mudança de plano programada. Aguarde a conclusão antes de solicitar outra.');
+    if (claimed?.action === 'plan_change_not_supported') throw new HttpError(409, 'Para trocar a categoria do plano, fale com o suporte antes de iniciar outra cobrança.');
     if (claimed?.action === 'provisioning') throw new HttpError(409, 'O Asaas está confirmando sua assinatura. Aguarde alguns instantes e atualize esta tela.');
     if (claimed?.action === 'unsupported_provider') throw new HttpError(409, 'Este espaço usa outro provedor de cobrança.');
     if (claimed?.action === 'busy') throw new HttpError(409, 'Há um checkout em preparação. Aguarde e atualize esta tela antes de tentar novamente.');
@@ -86,10 +90,10 @@ export async function POST(request) {
 
     claimToken = claimed.claimToken;
     const { checkoutMinutesToExpire } = checkoutConstants();
-    const useMonthlyPaymentLink = planType === 'monthly' && !claimed.scheduled;
+    const useMonthlyPaymentLink = plan.billingCycle === 'monthly' && !claimed.scheduled;
     const payload = useMonthlyPaymentLink
       ? buildAsaasMonthlyPaymentLinkPayload({ claim: claimed, endDate: brazilDateAfterDays(7) })
-      : buildAsaasCheckoutPayload({ planType, claim: claimed, appUrl: config.appUrl, minutesToExpire: checkoutMinutesToExpire });
+      : buildAsaasCheckoutPayload({ planCode, claim: claimed, appUrl: config.appUrl, minutesToExpire: checkoutMinutesToExpire });
     asaasCheckoutAttempted = true;
     const checkout = await callAsaas(useMonthlyPaymentLink ? '/paymentLinks' : '/checkouts', { config, method: 'POST', body: payload });
     let checkoutUrl;
@@ -121,7 +125,8 @@ export async function POST(request) {
     return jsonResponse({
       checkoutUrl,
       reused: false,
-      planType,
+      planType: plan.billingCycle,
+      planCode,
       amountCents: Number(claimed.priceCents),
       scheduled: Boolean(claimed.scheduled),
       effectiveAt: claimed.periodStart || null,

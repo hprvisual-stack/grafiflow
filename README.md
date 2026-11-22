@@ -48,13 +48,13 @@ Tabela comercial definida para uma etapa futura, ainda não habilitada no produt
 
 | Plano | Mensal: 3 primeiros meses | Mensal: depois | Anual à vista |
 | --- | ---: | ---: | ---: |
-| Individual | R$ 35,00/mês | R$ 50,00/mês | R$ 500,00 |
-| Equipe até 4 pessoas | R$ 75,00/mês | R$ 100,00/mês | R$ 1.000,00 |
-| Equipe com 5+ pessoas | R$ 150,00/mês | R$ 200,00/mês | R$ 2.000,00 |
+| Individual | R$ 50,00/mês | R$ 75,00/mês | R$ 500,00 |
+| Equipe até 4 PINs (inclui ADM) | R$ 100,00/mês | R$ 130,00/mês | R$ 1.000,00 |
+| Equipe 5+ PINs, sem limite | R$ 150,00/mês | R$ 200,00/mês | R$ 2.000,00 |
 
-Os planos comerciais preveem 15 dias de teste. A versão de cobrança atualmente no código ainda implementa apenas os tipos antigos individual mensal/anual, usa anual de R$ 450,00 e informa `team_checkout_available=false`. Não habilite cobrança antes de migrar preços e tipos de plano no app, API, funções do banco e webhooks, e homologar o ciclo completo em um Sandbox isolado. O checkout ativo poderia cobrar valores antigos.
+Os seis produtos incluem 15 dias de teste. O código do app, as APIs Asaas e as migrações versionadas agora contemplam esses preços e limites; a cobrança continua desligada até aplicar e conferir as migrações no projeto Supabase correto e homologar um checkout no Asaas Sandbox isolado. Mantenha `GRAFIFLOW_BILLING_ENABLED=false` em produção enquanto o projeto usar Vercel Hobby e enquanto a homologação comercial não estiver concluída.
 
-Depois das migrações base, aplique nesta ordem: `20261031021444_asaas_billing.sql`, `20261031120000_grafiflow_subscriptions_entitlements.sql`, `20261102000000_move_unused_legacy_workspaces_to_trial.sql`, `20261103000000_billing_payment_links_and_login_lockout.sql` e `20261103010000_permanent_free_accounts.sql`. A migração de entitlements cria o histórico financeiro, implementa trial único, carência, leitura do status e proteção de gravações por RLS/RPC. A migração de contas legadas **não reclassifica usuários automaticamente**: cada conta deve ser revisada com `supabase/diagnostics/legacy_trial_preflight.sql`, aprovada com evidência e só então processada por `supabase/diagnostics/legacy_trial_apply_approved.sql`. Contas com trial, pagamento ou checkout são excluídas; direitos legados concedidos manualmente ou situações ambíguas não devem ser aprovados. A migração de acesso gratuito permanente usa uma lista privada por ID de usuário; não inclua e-mails ou IDs reais no repositório.
+Depois das migrações base, aplique nesta ordem: `20261031021444_asaas_billing.sql`, `20261031120000_grafiflow_subscriptions_entitlements.sql`, `20261102000000_move_unused_legacy_workspaces_to_trial.sql`, `20261103000000_billing_payment_links_and_login_lockout.sql` e `20261103010000_permanent_free_accounts.sql`, `20261106000000_team_operations_finance.sql`, `20261117235201_metriflux_plan_catalog_and_team_limits.sql` e, por último, `20261122150000_metriflux_current_plan_prices.sql`. A migração de entitlements cria o histórico financeiro, implementa trial único, carência, leitura do status e proteção de gravações por RLS/RPC. A migração de contas legadas **não reclassifica usuários automaticamente**: cada conta deve ser revisada com `supabase/diagnostics/legacy_trial_preflight.sql`, aprovada com evidência e só então processada por `supabase/diagnostics/legacy_trial_apply_approved.sql`. Contas com trial, pagamento ou checkout são excluídas; direitos legados concedidos manualmente ou situações ambíguas não devem ser aprovados. A migração de acesso gratuito permanente usa uma lista privada por ID de usuário; não inclua e-mails ou IDs reais no repositório.
 
 Use um projeto Supabase separado para Preview e homologação. O flag `private.grafiflow_billing_settings.enforcement_enabled` é global ao projeto e afeta qualquer deployment que use esse banco; não use Preview para testes de cobrança quando ele compartilhar o banco de produção. No banco de produção, habilite o enforcement somente depois de revisar os espaços legados, confirmar a lista privada de isenções e publicar a versão compatível do app. A ativação é feita pelo SQL Editor:
 
@@ -64,7 +64,7 @@ set enforcement_enabled = true, updated_at = now()
 where singleton = true;
 ```
 
-Não habilite `GRAFIFLOW_BILLING_ENABLED` enquanto a implementação não suportar os seis produtos e preços comerciais desta tabela. Depois dessa atualização, faça homologação em Preview isolado, com projetos Supabase e Asaas Sandbox próprios. Nunca aponte o banco de produção para o Preview nem deixe checkout Sandbox visível a clientes. Alterações de variáveis de ambiente da Vercel exigem um novo deployment.
+A implementação suporta os seis produtos, mas as migrações novas ainda precisam ser aplicadas e verificadas no banco correto. Faça homologação em Preview isolado, com projetos Supabase e Asaas Sandbox próprios. Mantenha `GRAFIFLOW_BILLING_ENABLED=false` no beta e nunca deixe checkout Sandbox visível a clientes. A Vercel Hobby é para uso não comercial; venda requer hospedagem compatível. Alterações de variáveis de ambiente da Vercel exigem um novo deployment.
 
 Configure estas variáveis privadas no projeto Vercel somente durante a homologação futura; no beta gratuito, mantenha cobrança desligada:
 
@@ -72,7 +72,7 @@ Configure estas variáveis privadas no projeto Vercel somente durante a homologa
 - `ASAAS_API_KEY`: chave da API do Asaas para o mesmo ambiente escolhido abaixo.
 - `ASAAS_WEBHOOK_AUTH_TOKEN`: token aleatório com pelo menos 32 caracteres, diferente da chave de API.
 - `ASAAS_ENVIRONMENT`: `sandbox` para homologação; use `production` somente depois dos testes.
-- `GRAFIFLOW_BILLING_ENABLED`: mantenha `false` durante o beta gratuito. A implementação atual não está alinhada aos planos comerciais acima.
+- `GRAFIFLOW_BILLING_ENABLED`: mantenha `false` durante o beta gratuito. O código está alinhado ao catálogo, mas o banco e o checkout ainda precisam de migração e homologação.
 - `GRAFIFLOW_APP_URL`: endereço HTTPS do Metriflux, `https://metriflux.com.br`.
 - `GRAFIFLOW_ALLOWED_ORIGINS`: opcional, origens HTTPS adicionais separadas por vírgula.
 

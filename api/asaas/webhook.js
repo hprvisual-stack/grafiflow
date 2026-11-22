@@ -66,10 +66,14 @@ export async function POST(request) {
     });
 
     if (result?.requiredAction === 'upgrade_monthly_price' && result.subscriptionId) {
+      const standardPriceCents = Number(result.standardPriceCents ?? 7500);
+      if (![7500, 13000, 20000].includes(standardPriceCents)) {
+        throw new Error('Preço padrão de assinatura retornado pelo banco é inválido.');
+      }
       await callAsaas(`/subscriptions/${encodeURIComponent(result.subscriptionId)}`, {
         config,
         method: 'PUT',
-        body: { value: 50, updatePendingPayments: true },
+        body: { value: standardPriceCents / 100, updatePendingPayments: true },
       });
       await supabaseRequest('/rest/v1/rpc/complete_grafiflow_billing_action', {
         config,

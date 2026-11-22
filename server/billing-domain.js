@@ -1,16 +1,59 @@
 export const TRIAL_DAYS = 15;
 export const GRACE_DAYS = 10;
 export const MONTHLY_PROMO_CYCLES = 3;
-export const MONTHLY_PROMO_PRICE_CENTS = 3500;
-export const MONTHLY_STANDARD_PRICE_CENTS = 5000;
-export const ANNUAL_PRICE_CENTS = 45000;
 
+export const BILLING_PLAN_CATALOG = Object.freeze([
+  Object.freeze({
+    code: 'individual_monthly_v2', label: 'Individual mensal', family: 'individual', productTier: 'solo',
+    billingCycle: 'monthly', seatLimit: 1, trialDays: TRIAL_DAYS,
+    promoCycles: MONTHLY_PROMO_CYCLES, promoPriceCents: 5000, standardPriceCents: 7500,
+  }),
+  Object.freeze({
+    code: 'team_4_monthly_v2', label: 'Equipe até 4', family: 'team', productTier: 'team',
+    billingCycle: 'monthly', seatLimit: 4, trialDays: TRIAL_DAYS,
+    promoCycles: MONTHLY_PROMO_CYCLES, promoPriceCents: 10000, standardPriceCents: 13000,
+  }),
+  Object.freeze({
+    code: 'team_unlimited_monthly', label: 'Equipe ilimitada (5+)', family: 'team', productTier: 'team',
+    billingCycle: 'monthly', seatLimit: null, trialDays: TRIAL_DAYS,
+    promoCycles: MONTHLY_PROMO_CYCLES, promoPriceCents: 15000, standardPriceCents: 20000,
+  }),
+  Object.freeze({
+    code: 'individual_annual', label: 'Individual anual', family: 'individual', productTier: 'solo',
+    billingCycle: 'annual', seatLimit: 1, trialDays: TRIAL_DAYS, annualPriceCents: 50000,
+  }),
+  Object.freeze({
+    code: 'team_4_annual', label: 'Equipe até 4 anual', family: 'team', productTier: 'team',
+    billingCycle: 'annual', seatLimit: 4, trialDays: TRIAL_DAYS, annualPriceCents: 100000,
+  }),
+  Object.freeze({
+    code: 'team_unlimited_annual', label: 'Equipe ilimitada (5+) anual', family: 'team', productTier: 'team',
+    billingCycle: 'annual', seatLimit: null, trialDays: TRIAL_DAYS, annualPriceCents: 200000,
+  }),
+]);
+
+const PLANS_BY_CODE = new Map(BILLING_PLAN_CATALOG.map((plan) => [plan.code, plan]));
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function monthlyPriceCents(paidMonthlyCycles = 0) {
-  return Number(paidMonthlyCycles) < MONTHLY_PROMO_CYCLES
-    ? MONTHLY_PROMO_PRICE_CENTS
-    : MONTHLY_STANDARD_PRICE_CENTS;
+// Default values exposed by the current individual monthly offer.
+export const MONTHLY_PROMO_PRICE_CENTS = 5000;
+export const MONTHLY_STANDARD_PRICE_CENTS = 7500;
+export const ANNUAL_PRICE_CENTS = 50000;
+
+export function getBillingPlan(planCode) {
+  return PLANS_BY_CODE.get(String(planCode || '')) || null;
+}
+
+export function monthlyPriceCents(paidMonthlyCycles = 0, planCode = 'individual_monthly_v2') {
+  const plan = getBillingPlan(planCode);
+  if (!plan || plan.billingCycle !== 'monthly') return null;
+  return Number(paidMonthlyCycles) < plan.promoCycles ? plan.promoPriceCents : plan.standardPriceCents;
+}
+
+export function planPriceCents(planCode, paidMonthlyCycles = 0) {
+  const plan = getBillingPlan(planCode);
+  if (!plan) return null;
+  return plan.billingCycle === 'annual' ? plan.annualPriceCents : monthlyPriceCents(paidMonthlyCycles, planCode);
 }
 
 export function addCalendarMonths(value, months) {
@@ -103,25 +146,36 @@ export function countdownLabel(endsAt, now = new Date(), noun = 'Teste grátis')
   return `${noun}: ${totalDays} dias restantes`;
 }
 
-export function buildAsaasCheckoutPayload({ planType, claim, appUrl, minutesToExpire = 60 }) {
-  if (!['monthly', 'annual'].includes(planType)) throw new TypeError('Plano inválido.');
+function requestedPlanCode({ planCode, planType }) {
+  if (planCode) return String(planCode);
+  if (planType === 'monthly') return 'individual_monthly_v2';
+  if (planType === 'annual') return 'individual_annual';
+  return '';
+}
+
+export function buildAsaasCheckoutPayload({ planCode, planType, claim, appUrl, minutesToExpire = 60 }) {
+  const code = requestedPlanCode({ planCode, planType });
+  const plan = getBillingPlan(code);
+  if (!plan) throw new TypeError('Plano inválido.');
   const callback = {
     successUrl: `${appUrl}/?asaas=success`,
     cancelUrl: `${appUrl}/?asaas=cancel`,
     expiredUrl: `${appUrl}/?asaas=expired`,
   };
-  if (planType === 'annual') {
+  if (plan.billingCycle === 'annual') {
+    const amountCents = Number(claim?.priceCents ?? claim?.annualPriceCents);
+    if (amountCents !== plan.annualPriceCents) throw new TypeError('Preço anual do plano não corresponde ao catálogo.');
     return {
       billingTypes: ['CREDIT_CARD', 'PIX'],
       chargeTypes: ['DETACHED'],
       minutesToExpire,
       externalReference: claim.claimToken,
       callback,
-      items: [{ name: 'Plano anual Metriflux', description: '12 meses de acesso, pagamento único à vista, sem parcelamento', quantity: 1, value: 450 }],
+      items: [{ name: `Plano ${plan.label} Metriflux`, description: '12 meses de acesso, pagamento único à vista, sem parcelamento', quantity: 1, value: amountCents / 100 }],
     };
   }
   const amountCents = Number(claim.priceCents);
-  if (![3500, 5000].includes(amountCents) || !/^\d{4}-\d{2}-\d{2}$/.test(String(claim.nextDueDate || ''))) {
+  if (![plan.promoPriceCents, plan.standardPriceCents].includes(amountCents) || !/^\d{4}-\d{2}-\d{2}$/.test(String(claim.nextDueDate || ''))) {
     throw new TypeError('Configuração de cobrança mensal inválida.');
   }
   return {
@@ -130,15 +184,17 @@ export function buildAsaasCheckoutPayload({ planType, claim, appUrl, minutesToEx
     minutesToExpire,
     externalReference: claim.claimToken,
     callback,
-    items: [{ name: 'Plano mensal Metriflux', description: amountCents === 3500 ? 'Uma das três primeiras mensalidades promocionais' : 'Mensalidade do plano Metriflux', quantity: 1, value: amountCents / 100 }],
+    items: [{ name: `Plano ${plan.label} Metriflux`, description: amountCents === plan.promoPriceCents ? 'Uma das três primeiras mensalidades promocionais' : 'Mensalidade recorrente do plano Metriflux', quantity: 1, value: amountCents / 100 }],
     subscription: { cycle: 'MONTHLY', nextDueDate: claim.nextDueDate },
   };
 }
 
 export function buildAsaasMonthlyPaymentLinkPayload({ claim, endDate }) {
+  const plan = getBillingPlan(claim?.planCode || 'individual_monthly_v2');
   const amountCents = Number(claim?.priceCents);
   const claimToken = String(claim?.claimToken || '');
-  if (![3500, 5000].includes(amountCents) || !/^[0-9a-f-]{36}$/i.test(claimToken)) {
+  if (!plan || plan.billingCycle !== 'monthly' || ![plan.promoPriceCents, plan.standardPriceCents].includes(amountCents)
+      || !/^[0-9a-f-]{36}$/i.test(claimToken)) {
     throw new TypeError('Configuração de cobrança mensal inválida.');
   }
   if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate))) {
@@ -146,14 +202,15 @@ export function buildAsaasMonthlyPaymentLinkPayload({ claim, endDate }) {
   }
 
   return {
-    name: 'Assinatura mensal Metriflux',
-    description: amountCents === 3500
-      ? 'Assinatura mensal Metriflux: uma das três primeiras mensalidades promocionais.'
-      : 'Assinatura mensal Metriflux.',
+    name: `Assinatura mensal ${plan.label} Metriflux`,
+    description: amountCents === plan.promoPriceCents
+      ? `Assinatura ${plan.label}: uma das três primeiras mensalidades promocionais.`
+      : `Assinatura mensal ${plan.label} Metriflux.`,
     value: amountCents / 100,
     billingType: 'UNDEFINED',
     chargeType: 'RECURRENT',
     subscriptionCycle: 'MONTHLY',
+    limit: 1,
     dueDateLimitDays: 7,
     externalReference: claimToken,
     notificationEnabled: true,
@@ -161,8 +218,11 @@ export function buildAsaasMonthlyPaymentLinkPayload({ claim, endDate }) {
   };
 }
 
-export function expectedPlanPriceCents(planType, cycleNumber = 1) {
-  if (planType === 'annual') return ANNUAL_PRICE_CENTS;
-  if (planType === 'monthly') return monthlyPriceCents(Math.max(0, Number(cycleNumber) - 1));
-  return null;
+export function expectedPlanPriceCents(planCode, cycleNumber = 1) {
+  const code = planCode === 'monthly' ? 'individual_monthly_v2' : planCode === 'annual' ? 'individual_annual' : planCode;
+  const plan = getBillingPlan(code);
+  if (!plan) return null;
+  return plan.billingCycle === 'annual'
+    ? plan.annualPriceCents
+    : monthlyPriceCents(Math.max(0, Number(cycleNumber) - 1), code);
 }
