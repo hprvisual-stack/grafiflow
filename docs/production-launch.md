@@ -4,13 +4,13 @@ Atualizado em 22/11/2026. Este documento separa o que foi verificado no site, o 
 
 ## Estado atual sem custo
 
-- `https://metriflux.com.br` responde HTTP 200, com título “Metriflux — orçamento gráfico”. O HTML servido usa o pacote de marca `20261122-metriflux-brand`; ícones, manifesto e worker do PWA também respondem HTTP 200.
+- `https://metriflux.com.br` responde HTTP 200, com título “Metriflux — orçamento gráfico”. O HTML servido usa o pacote publicado `20261122-metriflux-plan-pricing`; ícones, manifesto e worker do PWA também respondem HTTP 200.
 - `https://metriflux.com.br/api/config` informa uma configuração Supabase presente e retorna `billingEnabled=false` e `billingCheckoutEnabled=false`. Não há checkout ou cobrança ativa no site.
 - O beta atual não aplica trial cronometrado nem bloqueio de assinatura. A conta pode usar o aplicativo sem pagamento enquanto a flag continuar desligada.
 - Uma consulta SQL que você mostrou anteriormente indicava `enforcement_enabled=true` no banco. Se esse valor ainda estiver ativo, contas sem trial ou isenção podem continuar bloqueadas para sincronização, mesmo com a cobrança desligada na Vercel. O painel Supabase não está autenticado neste ambiente para eu confirmar ou alterar esse valor.
 - O botão para salvar materiais do cálculo e a biblioteca de medidas de vidro estão no código publicado. A biblioteca continua sem dados pré-carregados; cada medida precisa ser cadastrada com origem e direito de uso.
 - A marca Metriflux foi padronizada no HTML, no manifesto, nos ativos do PWA, no nome dos backups exportados, nos metadados do pacote e na tela de Actions do GitHub. O ID do PWA e chaves/RPCs Supabase com prefixo `grafiflow` foram mantidos para preservar instalações, sessões, dados e compatibilidade com o banco existente.
-- O commit `ad9d434` foi enviado para `vicktordarosa07-source/grafiflow`; o domínio já serve a versão com a marca atualizada. `hprvisual-stack/grafiflow` ainda está em `6d135ee`: a identidade GitHub conectada tem permissão de leitura, e o push foi recusado com HTTP 403. Portanto, as duas cópias ainda divergem.
+- Em 22/11/2026, os dois repositórios (`hprvisual-stack/grafiflow` e `vicktordarosa07-source/grafiflow`) foram atualizados para o mesmo commit `7621b10`. `metriflux.com.br` e `www.metriflux.com.br` servem o pacote com os novos preços e o PWA atualizado. A API privada da Vercel não permite consultar o registro interno do deployment nesta sessão; a confirmação foi feita pelo conteúdo público servido.
 - A integração Vercel disponível nesta sessão não lista o projeto, então não pude consultar o painel privado. A confirmação de produção foi feita por respostas HTTP do domínio e de seus ativos públicos.
 
 Este modo é adequado para testes fechados e uso interno sem custo adicional. A Vercel Hobby restringe o serviço a uso pessoal e não comercial; manter o plano gratuito significa adiar venda e divulgação comercial. Consulte [Vercel Hobby](https://vercel.com/docs/plans/hobby) e os [termos da Vercel](https://vercel.com/legal/terms).
