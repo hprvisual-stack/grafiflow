@@ -3272,7 +3272,7 @@ function glassRecordYears(record) {
 }
 
 function vehicleGlassStatusLabel(record) {
-  if (record.record_scope === 'library') return 'Biblioteca MetriFlux · validado';
+  if (record.record_scope === 'library') return 'Biblioteca Metriflux · validado';
   if (record.record_status === 'pending_review') return 'Aguardando revisão';
   if (record.record_status === 'rejected') return 'Revisão necessária';
   return 'Biblioteca da empresa';
@@ -3434,7 +3434,7 @@ function syncVehicleGlassSourceFields() {
   if (sourceLabel && !sourceLabel.value.trim() && source === 'own_measurement') sourceLabel.value = 'Medição própria';
   const rightsCopy = document.getElementById('vehicle-glass-rights-copy');
   if (rightsCopy) rightsCopy.textContent = destination === 'review'
-    ? 'Confirmo que tenho direito de enviar estes dados e autorizo o MetriFlux, se aprovados, a publicá-los para os demais usuários.'
+    ? 'Confirmo que tenho direito de enviar estes dados e autorizo o Metriflux, se aprovados, a publicá-los para os demais usuários.'
     : 'Confirmo que medi este vidro ou tenho autorização para cadastrar estes dados.';
 }
 
@@ -5471,7 +5471,7 @@ function exportBackup() {
     teamTasks: clone(savedTeamTasks),
     purchases: clone(savedPurchases),
   };
-  downloadFile(`grafiflow-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2));
+  downloadFile(`metriflux-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2));
   showToast('Backup exportado.');
 }
 
@@ -6140,7 +6140,7 @@ function initialize() {
     updateAccountStatus();
     setAuthAccessUI(false);
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261120-vehicle-glass').catch(() => undefined);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=20261122-metriflux-brand').catch(() => undefined);
 }
 
 initialize();

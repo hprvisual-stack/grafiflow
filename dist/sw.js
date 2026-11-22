@@ -1,20 +1,20 @@
-const CACHE_NAME = 'metriflux-static-v62';
+const CACHE_NAME = 'metriflux-static-v63';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20261120-vehicle-glass',
-  './app.js?v=20261120-vehicle-glass',
+  './styles.css?v=20261122-metriflux-brand',
+  './app.js?v=20261122-metriflux-brand',
   './money-input.js',
   './offline-billing.js',
   './cloud-sync-policy.js',
   './local-account-storage.js',
-  './api/config?v=20261120-vehicle-glass',
-  './manifest.webmanifest?v=20261120-vehicle-glass',
-  './metriflow-favicon.png',
+  './api/config?v=20261122-metriflux-brand',
+  './manifest.webmanifest?v=20261122-metriflux-brand',
+  './metriflux-favicon.png',
   './metriflux-logo.png',
   './login-print-roll-v1.png',
-  './metriflow-icon-192.png',
-  './metriflow-icon-512.png',
+  './metriflux-icon-192.png',
+  './metriflux-icon-512.png',
 ];
 const APP_SHELL_URLS = new Set(APP_SHELL.map((asset) => new URL(asset, self.location.href).href));
 

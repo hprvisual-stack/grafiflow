@@ -1,4 +1,4 @@
-name: GrafiFlow CI
+name: Metriflux CI
 
 on:
   pull_request:

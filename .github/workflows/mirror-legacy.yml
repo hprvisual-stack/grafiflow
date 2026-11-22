@@ -1,4 +1,4 @@
-name: Mirror main to legacy GrafiFlow repository
+name: Mirror main to secondary repository
 
 on:
   push:
