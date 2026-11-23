@@ -38,17 +38,17 @@ const scenarios = [
   ['06 confirmed payment replaces trial access state', () => assert.equal(deriveEntitlement({ trial_status: 'active', trial_ends_at: new Date(now.getTime() + 10 * 86_400_000), current_period_end: new Date(now.getTime() + 30 * 86_400_000) }, now).state, 'subscription_active')],
   ['07 payment on the last trial day maintains paid access', () => assert.equal(deriveEntitlement({ trial_status: 'active', trial_ends_at: now, current_period_end: new Date(now.getTime() + 30 * 86_400_000) }, now).accessAllowed, true)],
   ['08 trial expiry blocks access without grace', () => assert.equal(deriveEntitlement({ trial_used: true, trial_status: 'expired', trial_ends_at: new Date(now.getTime() - 1) }, now).accessAllowed, false)],
-  ['09 first monthly cycle costs R$ 35', () => assert.equal(monthlyPriceCents(0), 3500)],
-  ['10 second monthly cycle costs R$ 35', () => assert.equal(monthlyPriceCents(1), 3500)],
-  ['11 third monthly cycle costs R$ 35', () => assert.equal(monthlyPriceCents(2), 3500)],
-  ['12 fourth monthly cycle costs R$ 50', () => assert.equal(monthlyPriceCents(3), 5000)],
-  ['13 annual plan costs R$ 450', () => assert.equal(expectedPlanPriceCents('annual'), 45000)],
+  ['09 first monthly cycle costs R$ 50', () => assert.equal(monthlyPriceCents(0), 5000)],
+  ['10 second monthly cycle costs R$ 50', () => assert.equal(monthlyPriceCents(1), 5000)],
+  ['11 third monthly cycle costs R$ 50', () => assert.equal(monthlyPriceCents(2), 5000)],
+  ['12 fourth monthly cycle costs R$ 75', () => assert.equal(monthlyPriceCents(3), 7500)],
+  ['13 annual plan costs R$ 500', () => assert.equal(expectedPlanPriceCents('annual'), 50000)],
   ['14 annual checkout is detached and has no installment fields', () => {
-    const payload = buildAsaasCheckoutPayload({ planType: 'annual', claim: { claimToken: 'claim-1' }, appUrl: 'https://grafiflow.vercel.app' });
+    const payload = buildAsaasCheckoutPayload({ planType: 'annual', claim: { claimToken: 'claim-1', priceCents: 50000 }, appUrl: 'https://metriflux.com.br' });
     assert.deepEqual(payload.chargeTypes, ['DETACHED']);
     assert.equal('subscription' in payload, false);
     assert.equal('installment' in payload, false);
-    assert.equal(payload.items[0].value, 450);
+    assert.equal(payload.items[0].value, 500);
   }],
   ['15 five day due notice is active inside its window only', () => {
     assert.equal(isDueNoticeActive(new Date(now.getTime() + 5 * 86_400_000), now), true);
@@ -125,7 +125,7 @@ const scenarios = [
     const end = new Date(now.getTime() + 20 * 86_400_000);
     assert.equal(periodStartAfterPayment(end, now).getTime(), end.getTime());
     assert.match(migration, /pending_plan_effective_at/);
-    const annual = buildAsaasCheckoutPayload({ planType: 'annual', claim: { claimToken: 'claim-2' }, appUrl: 'https://grafiflow.vercel.app' });
+    const annual = buildAsaasCheckoutPayload({ planType: 'annual', claim: { claimToken: 'claim-2', priceCents: 50000 }, appUrl: 'https://metriflux.com.br' });
     assert.deepEqual(annual.chargeTypes, ['DETACHED']);
   }],
   ['34 an expired paid term stays expired while a provider subscription id remains', () => {
@@ -150,7 +150,7 @@ const scenarios = [
   }],
   ['38 confirmed annual periods do not display monthly promotional pricing', () => {
     assert.ok(appSource.includes("subscription?.plan_type === 'annual'"));
-    assert.ok(appSource.includes('A próxima renovação custa R$ 450,00 à vista.'));
+    assert.ok(appSource.includes('subscription?.annual_amount_cents || 50000'));
   }],
   ['39 a reserved annual period is linked to the same payment before being confirmed', () => {
     assert.match(migration, /provider_payment_id = coalesce\(provider_payment_id, v_payment_id\)/);
@@ -185,30 +185,30 @@ test('calendar cycles clamp at month end and preserve leap years', () => {
 
 test('monthly checkout uses a backend-provided cycle price and recurrence only', () => {
   const payload = buildAsaasCheckoutPayload({
-    planType: 'monthly', claim: { claimToken: 'claim-monthly', priceCents: 3500, nextDueDate: '2026-10-31' }, appUrl: 'https://grafiflow.vercel.app',
+    planType: 'monthly', claim: { claimToken: 'claim-monthly', priceCents: 5000, nextDueDate: '2026-10-31' }, appUrl: 'https://metriflux.com.br',
   });
   assert.deepEqual(payload.chargeTypes, ['RECURRENT']);
-  assert.equal(payload.items[0].value, 35);
+  assert.equal(payload.items[0].value, 50);
   assert.deepEqual(payload.subscription, { cycle: 'MONTHLY', nextDueDate: '2026-10-31' });
   assert.equal('installment' in payload, false);
 });
 
 test('annual one-time checkout offers Pix or card without installments', () => {
   const payload = buildAsaasCheckoutPayload({
-    planType: 'annual', claim: { claimToken: 'claim-annual-pix' }, appUrl: 'https://grafiflow.vercel.app',
+    planType: 'annual', claim: { claimToken: 'claim-annual-pix', priceCents: 50000 }, appUrl: 'https://metriflux.com.br',
   });
   assert.deepEqual(payload.billingTypes, ['CREDIT_CARD', 'PIX']);
   assert.deepEqual(payload.chargeTypes, ['DETACHED']);
-  assert.equal(payload.items[0].value, 450);
+  assert.equal(payload.items[0].value, 500);
   assert.equal('installment' in payload, false);
 });
 
 test('monthly payment link offers Asaas-supported recurring payment methods at the reserved cycle price', () => {
   const payload = buildAsaasMonthlyPaymentLinkPayload({
-    claim: { claimToken: 'd4c7a184-1a2b-4f31-9c22-61546a6fb022', priceCents: 3500 },
+    claim: { claimToken: 'd4c7a184-1a2b-4f31-9c22-61546a6fb022', priceCents: 5000 },
     endDate: '2026-11-09',
   });
-  assert.equal(payload.value, 35);
+  assert.equal(payload.value, 50);
   assert.equal(payload.billingType, 'UNDEFINED');
   assert.equal(payload.chargeType, 'RECURRENT');
   assert.equal(payload.subscriptionCycle, 'MONTHLY');
@@ -297,9 +297,11 @@ test('sign-in and session restore refresh payment button availability', () => {
   assert.match(appSource, /querySelectorAll\('\[data-billing-plan\], #billing-start-trial-button'\)[\s\S]*button\.disabled = !online \|\| !cloudSession\?\.access_token/);
 });
 
-test('Sandbox production gate hides payment plans while keeping the free trial control', () => {
+test('Sandbox production gate keeps plan details visible but disables checkout outside its matching environment', () => {
   assert.match(appSource, /function isBillingCheckoutEnabled\(\)[\s\S]*billingCheckoutEnabled !== false/);
-  assert.match(appSource, /gatePlans\.hidden = !isBillingCheckoutEnabled\(\)/);
+  assert.match(appSource, /if \(gatePlans\) gatePlans\.hidden = false/);
+  assert.match(appSource, /if \(gateCheckoutNotice\) gateCheckoutNotice\.hidden = isBillingCheckoutEnabled\(\)/);
+  assert.match(appSource, /planButton\.disabled = !navigator\.onLine \|\| !cloudSession\?\.access_token \|\| !checkoutAllowedForState/);
   assert.match(appSource, /if \(!isBillingCheckoutEnabled\(\)\)[\s\S]*Checkout indisponível porque o ambiente Asaas não corresponde/);
   assert.match(appMarkup, /id="billing-start-trial-button"/);
   assert.match(appMarkup, /id="billing-gate-checkout-notice"/);

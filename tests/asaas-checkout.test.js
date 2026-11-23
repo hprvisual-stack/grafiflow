@@ -44,7 +44,7 @@ function checkoutRequest(planType = 'monthly') {
   });
 }
 
-function createCheckoutFetcher({ scheduled = false, priceCents = 3500, permanentFree = false } = {}) {
+function createCheckoutFetcher({ scheduled = false, priceCents = 5000, permanentFree = false } = {}) {
   const calls = [];
   const fetcher = async (url, options = {}) => {
     const call = { url: String(url), options, body: options.body ? JSON.parse(options.body) : undefined };
@@ -58,10 +58,11 @@ function createCheckoutFetcher({ scheduled = false, priceCents = 3500, permanent
     if (call.url.endsWith('/rpc/is_grafiflow_permanent_free_account')) {
       return new Response(JSON.stringify(permanentFree), { status: 200 });
     }
-    if (call.url.endsWith('/rpc/claim_grafiflow_checkout')) {
+    if (call.url.endsWith('/rpc/claim_grafiflow_plan_checkout')) {
       return new Response(JSON.stringify({
         action: 'create',
         claimToken: 'd4c7a184-1a2b-4f31-9c22-61546a6fb022',
+        planCode: 'individual_monthly_v2',
         priceCents,
         nextDueDate: scheduled ? '2026-12-03' : '2026-11-03',
         scheduled,
@@ -89,7 +90,7 @@ test('permanent free account is rejected before creating any checkout', async ()
     assert.equal(response.status, 409);
     assert.match((await response.json()).error, /gratuito permanente/i);
   });
-  assert.equal(calls.some((call) => call.url.endsWith('/rpc/claim_grafiflow_checkout')), false);
+  assert.equal(calls.some((call) => call.url.endsWith('/rpc/claim_grafiflow_plan_checkout')), false);
   assert.equal(calls.some((call) => call.url.includes('/v3/paymentLinks') || call.url.includes('/v3/checkouts')), false);
 });
 
@@ -100,12 +101,12 @@ test('monthly signup creates an expiring recurring Asaas Payment Link with selec
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.equal(result.checkoutUrl, 'https://sandbox.asaas.com/l/grafiflow-test');
-    assert.equal(result.amountCents, 3500);
+    assert.equal(result.amountCents, 5000);
     assert.equal(result.planType, 'monthly');
   });
   const asaasCall = calls.find((call) => call.url.endsWith('/v3/paymentLinks'));
   assert.ok(asaasCall);
-  assert.equal(asaasCall.body.value, 35);
+  assert.equal(asaasCall.body.value, 50);
   assert.equal(asaasCall.body.billingType, 'UNDEFINED');
   assert.equal(asaasCall.body.chargeType, 'RECURRENT');
   assert.equal(asaasCall.body.subscriptionCycle, 'MONTHLY');
@@ -116,7 +117,7 @@ test('monthly signup creates an expiring recurring Asaas Payment Link with selec
 });
 
 test('scheduled monthly downgrade preserves the annual-to-monthly Asaas checkout flow', async () => {
-  const { calls, fetcher } = createCheckoutFetcher({ scheduled: true, priceCents: 3500 });
+  const { calls, fetcher } = createCheckoutFetcher({ scheduled: true, priceCents: 5000 });
   await withCheckoutEnvironment(fetcher, async () => {
     const response = await checkoutPost(checkoutRequest());
     assert.equal(response.status, 200);
